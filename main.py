@@ -45,10 +45,15 @@ os.makedirs("uploads", exist_ok=True)
 # БАЗА ДАННЫХ
 # ============================================
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
 # ============================================
 # МОДЕЛИ
 # ============================================
