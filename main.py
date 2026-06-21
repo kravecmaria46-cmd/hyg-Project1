@@ -1369,28 +1369,28 @@ async def generate_world(req: GenerateRequest, user_id: int):
     if not user:
         db.close()
         return JSONResponse({"error": "Пользователь не найден"}, 404)
-
+    
     openai.api_key = POLZA_API_KEY
     openai.base_url = "https://polza.ai/api/v1/"
-
+    
     # Определяем, короткий это запрос или длинный
     is_short = len(req.prompt.split()) < 10
-
+    
     if is_short:
         system_prompt = """Ты — помощник по созданию миров для ролевых игр.
         Пользователь дал КОРОТКИЙ запрос. Твоя задача:
         1. Распознать жанр и сеттинг
         2. Додумать недостающие детали (история, правила, атмосфера)
         3. Сделать мир ЖИВЫМ и ИНТЕРЕСНЫМ
-
+        
         Сгенерируй мир в формате JSON с полями:
         name, description, genre, setting, rules.
-
+        
         Заполни ВСЕ поля качественно и подробно!
         description - минимум 2-3 предложения.
         setting - минимум 2-3 предложения.
         rules - минимум 3-5 правил мира.
-
+        
         ВАЖНО: Создай ТОЛЬКО ОДИН мир!"""
     else:
         system_prompt = """Ты — помощник по созданию миров для ролевых игр.
@@ -1398,17 +1398,17 @@ async def generate_world(req: GenerateRequest, user_id: int):
         1. Точно следовать всем указаниям пользователя
         2. Не добавлять ничего от себя
         3. Сохранить все детали из запроса
-
+        
         Сгенерируй мир в формате JSON с полями:
         name, description, genre, setting, rules.
-
+        
         Заполни ВСЕ поля качественно и подробно!
         description - минимум 2-3 предложения.
         setting - минимум 2-3 предложения.
         rules - минимум 3-5 правил мира.
-
+        
         ВАЖНО: Создай ТОЛЬКО ОДИН мир!"""
-
+    
     try:
         response = openai.chat.completions.create(
             model=POLZA_MODEL,
@@ -1420,7 +1420,7 @@ async def generate_world(req: GenerateRequest, user_id: int):
             max_tokens=1500
         )
         result = response.choices[0].message.content
-
+        
         import re
         json_match = re.search(r'\{.*\}', result, re.DOTALL)
         if json_match:
@@ -1435,7 +1435,7 @@ async def generate_world(req: GenerateRequest, user_id: int):
                 "setting": result[:200],
                 "rules": "Правила не указаны"
             }
-
+        
         new_world = World(
             created_by=user_id,
             name=world_data.get('name', 'Без названия'),
@@ -1454,7 +1454,6 @@ async def generate_world(req: GenerateRequest, user_id: int):
     except Exception as e:
         db.close()
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
-
 # ============================================
 # ИСТОРИЯ ЧАТОВ (СПИСОК ДИАЛОГОВ)
 # ============================================
