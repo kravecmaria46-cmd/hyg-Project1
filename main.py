@@ -33,28 +33,26 @@ import asyncio
 from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, Integer, ForeignKey, JSON, Float, inspect, func
 
 # ============================================
-# ДАННЫЕ
-# ============================================
-
-POLZA_API_KEY = "pza_9X4riIlk69d0wY9Z_360uC6TXA7Nips8"
-POLZA_MODEL = "deepseek/deepseek-v4-flash"
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///hyg_portal.db")
-os.makedirs("uploads", exist_ok=True)
-
-# ============================================
 # БАЗА ДАННЫХ
 # ============================================
 
+import os
+from sqlalchemy import create_engine
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///hyg_portal.db")
 
-# Для SQLite нужен check_same_thread, для PostgreSQL - нет
 if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+    connect_args = {"check_same_thread": False}
 else:
-    engine = create_engine(DATABASE_URL)
+    connect_args = {
+        "pool_size": 10,
+        "max_overflow": 20,
+    }
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)  
+Base = declarative_base() 
 # ============================================
 # МОДЕЛИ
 # ============================================
@@ -178,42 +176,7 @@ class Room(Base):
 
 Base.metadata.create_all(bind=engine)
 
-inspector = inspect(engine)
-
-if "users" in inspector.get_table_names():
-    columns = [col["name"] for col in inspector.get_columns("users")]
-    if "display_name" not in columns:
-        with engine.connect() as conn:
-            conn.execute("ALTER TABLE users ADD COLUMN display_name VARCHAR(100)")
-            conn.commit()
-            print("✅ Колонка display_name добавлена")
-
-if "lore_entries" in inspector.get_table_names():
-    columns = [col["name"] for col in inspector.get_columns("lore_entries")]
-    if "room_id" not in columns:
-        with engine.connect() as conn:
-            conn.execute("ALTER TABLE lore_entries ADD COLUMN room_id INTEGER")
-            conn.commit()
-            print("✅ Колонка room_id добавлена в lore_entries")
-
-if "rooms" in inspector.get_table_names():
-    columns = [col["name"] for col in inspector.get_columns("rooms")]
-    if "members" not in columns:
-        with engine.connect() as conn:
-            conn.execute("ALTER TABLE rooms ADD COLUMN members JSON")
-            conn.commit()
-            print("✅ Колонка members добавлена в rooms")
-
-if "personas" in inspector.get_table_names():
-    columns = [col["name"] for col in inspector.get_columns("personas")]
-    if "world_id" not in columns:
-        with engine.connect() as conn:
-            conn.execute("ALTER TABLE personas ADD COLUMN world_id INTEGER")
-            conn.commit()
-            print("✅ Колонка world_id добавлена в personas")
-
-print("✅ База данных готова")
-
+print("✅ База данных создана")
 # ============================================
 # FASTAPI
 # ============================================
