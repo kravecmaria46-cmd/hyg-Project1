@@ -2205,8 +2205,21 @@ HTML = r"""<!DOCTYPE html>
         <a onclick="showPage('lore')" style="margin-top:12px;"><span class="icon">◈</span>Лорбук</a>
         <a onclick="showPage('profile')"><span class="icon">⚙</span>Квартира</a>
     </div>
+    
+    <!-- ===== ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ ===== -->
     <div class="user-info" id="userInfo">Не авторизован</div>
-    <button class="auth-btn" id="authBtn" onclick="handleAuth()">Войти</button>
+    
+    <!-- ===== КНОПКИ АВТОРИЗАЦИИ ===== -->
+    <div style="display:flex; flex-direction:column; gap:8px; margin-top:4px;">
+        <!-- Кнопка Войти (показывается когда пользователь не авторизован) -->
+        <button class="auth-btn" id="authBtn" onclick="handleAuth()">Войти</button>
+        
+        <!-- Кнопка Выйти (показывается когда пользователь авторизован) -->
+        <button class="auth-btn" id="logoutBtn" onclick="logout()" 
+                style="display:none; background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3);">
+            🚪 Выйти
+        </button>
+    </div>
 </div>
 
 <!-- ===== ОСНОВНОЙ КОНТЕНТ ===== -->
@@ -2286,7 +2299,7 @@ HTML = r"""<!DOCTYPE html>
                 <option value="">Без мира</option>
             </select>
             <label class="checkbox-label"><input type="checkbox" id="charPublic"> Публичный</label>
-            <<div style="margin: 8px 0;">
+            <div style="margin: 8px 0;">
     <label style="color:#aaa; font-size:13px; display:block; margin-bottom:6px;">✨ Быстрая генерация персонажа</label>
 
     <div style="display:flex; gap:10px;">
@@ -3009,13 +3022,18 @@ async function login() {
             document.getElementById('authBtn').textContent = currentUser;
             document.getElementById('userInfo').textContent = '◌ ' + currentUser;
             document.getElementById('profileName').textContent = 'Добро пожаловать, ' + currentUser + '!';
+            
+            document.getElementById('authBtn').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'block';
+            
             localStorage.setItem('hyg_user', JSON.stringify({ username: currentUser, id: userId }));
             document.getElementById('cover').classList.add('hidden');
             document.querySelector('.hamburger-btn').style.display = 'block';
             showPage('home');
             loadProfile();
         } else alert('Ошибка: ' + d.error);
-    } catch(e) { alert('Ошибка: ' + e.message); }
+    } catch(e) { alert('Ошибка: ' + e.message);
+    }
 }
 
 function logout() {
@@ -3023,6 +3041,10 @@ function logout() {
     userId = null;
     localStorage.removeItem('hyg_user');
     document.getElementById('authBtn').textContent = 'Войти';
+    
+    document.getElementById('authBtn').style.display = 'block';
+    document.getElementById('logoutBtn').style.display = 'none';
+    
     document.getElementById('userInfo').textContent = 'Не авторизован';
     document.querySelector('.hamburger-btn').style.display = 'none';
     showPage('home');
