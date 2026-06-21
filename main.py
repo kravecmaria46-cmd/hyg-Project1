@@ -38,8 +38,7 @@ from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, I
 
 POLZA_API_KEY = "pza_9X4riIlk69d0wY9Z_360uC6TXA7Nips8"
 POLZA_MODEL = "deepseek/deepseek-v4-flash"
-DATABASE_URL = "sqlite:///hyg_portal.db"
-
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///hyg_portal.db")
 os.makedirs("uploads", exist_ok=True)
 
 # ============================================
