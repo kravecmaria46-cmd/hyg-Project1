@@ -11,8 +11,6 @@ Original file is located at
 # H.Y.G. PORTAL - БЭКЕНД
 # ============================================
 
-!pip install fastapi uvicorn nest-asyncio python-multipart bcrypt sqlalchemy openai aiofiles -q
-
 import os
 import json
 import bcrypt
