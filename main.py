@@ -15,13 +15,14 @@ import os
 import json
 import bcrypt
 import shutil
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, Integer, ForeignKey, JSON, Float, inspect
+from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, Integer, ForeignKey, JSON, Float, inspect, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from pydantic import BaseModel
@@ -30,7 +31,13 @@ import openai
 import nest_asyncio
 nest_asyncio.apply()
 import asyncio
-from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, Integer, ForeignKey, JSON, Float, inspect, func
+
+# ============================================
+# ДЕФОЛТНЫЕ ЗНАЧЕНИЯ ДЛЯ AI
+# ============================================
+
+POLZA_API_KEY = os.environ.get("POLZA_API_KEY", "your-default-api-key-here")
+POLZA_MODEL = os.environ.get("POLZA_MODEL", "deepseek/deepseek-v4-flash")
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -53,6 +60,7 @@ engine = create_engine(DATABASE_URL, connect_args=connect_args)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)  
 Base = declarative_base() 
+
 # ============================================
 # МОДЕЛИ
 # ============================================
@@ -69,6 +77,14 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     api_keys = Column(JSON, default=dict)
     active_persona_id = Column(Integer, nullable=True)
+
+class Session(Base):
+    __tablename__ = "sessions"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    session_token = Column(String(255), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
 
 class Character(Base):
     __tablename__ = "characters"
@@ -177,6 +193,51 @@ class Room(Base):
 Base.metadata.create_all(bind=engine)
 
 print("✅ База данных создана")
+
+# ============================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СЕССИЙ
+# ============================================
+
+def create_session(user_id: int) -> str:
+    """Создает новую сессию для пользователя"""
+    db = SessionLocal()
+    # Удаляем старые сессии этого пользователя
+    db.query(Session).filter(Session.user_id == user_id).delete()
+    
+    token = secrets.token_urlsafe(32)
+    session = Session(
+        user_id=user_id,
+        session_token=token,
+        expires_at=datetime.utcnow() + timedelta(days=7)
+    )
+    db.add(session)
+    db.commit()
+    db.close()
+    return token
+
+def get_user_by_token(token: str) -> Optional[User]:
+    """Получает пользователя по токену сессии"""
+    if not token:
+        return None
+    db = SessionLocal()
+    session = db.query(Session).filter(
+        Session.session_token == token,
+        Session.expires_at > datetime.utcnow()
+    ).first()
+    if not session:
+        db.close()
+        return None
+    user = db.query(User).filter(User.id == session.user_id).first()
+    db.close()
+    return user
+
+def delete_session(token: str):
+    """Удаляет сессию (выход)"""
+    db = SessionLocal()
+    db.query(Session).filter(Session.session_token == token).delete()
+    db.commit()
+    db.close()
+
 # ============================================
 # FASTAPI
 # ============================================
@@ -305,8 +366,17 @@ async def register(req: RegisterRequest):
     db.refresh(persona)
     user.active_persona_id = persona.id
     db.commit()
+    
+    # Создаем сессию
+    token = create_session(user_id)
     db.close()
-    return {"success": True, "user_id": user_id, "username": username}
+    
+    return {
+        "success": True, 
+        "user_id": user_id, 
+        "username": username,
+        "token": token
+    }
 
 @app.post("/api/login")
 async def login(req: LoginRequest):
@@ -318,17 +388,33 @@ async def login(req: LoginRequest):
     if not bcrypt.checkpw(req.password.encode(), user.password_hash.encode()):
         db.close()
         return JSONResponse({"error": "Неверный пароль"}, 401)
-    user_id = user.id
-    username = user.username
+    
+    # Создаем сессию
+    token = create_session(user.id)
     db.close()
-    return {"success": True, "user_id": user_id, "username": username}
+    
+    return {
+        "success": True, 
+        "user_id": user.id, 
+        "username": user.username,
+        "token": token
+    }
+
+@app.post("/api/logout")
+async def logout(token: str):
+    delete_session(token)
+    return {"success": True}
 
 # --- ПЕРСОНАЖИ ---
 
 @app.get("/api/characters")
-async def get_characters(user_id: int):
+async def get_characters(token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    chars = db.query(Character).filter(Character.user_id == user_id).all()
+    chars = db.query(Character).filter(Character.user_id == user.id).all()
     db.close()
     return [{
         "id": c.id, "name": c.name, "role": c.role,
@@ -355,12 +441,13 @@ async def get_public_characters(limit: int = 20, offset: int = 0, search: str = 
     }
 
 @app.post("/api/characters")
-async def create_character(char: CharacterCreate, user_id: int):
+async def create_character(char: CharacterCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    if not db.query(User).filter(User.id == user_id).first():
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
-    new_char = Character(**char.dict(), user_id=user_id)
+    new_char = Character(**char.dict(), user_id=user.id)
     db.add(new_char)
     db.commit()
     db.refresh(new_char)
@@ -370,9 +457,13 @@ async def create_character(char: CharacterCreate, user_id: int):
     return {"id": char_id, "name": char_name, "success": True}
 
 @app.put("/api/characters/{char_id}")
-async def update_character(char_id: int, char: CharacterCreate, user_id: int):
+async def update_character(char_id: int, char: CharacterCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    existing = db.query(Character).filter(Character.id == char_id, Character.user_id == user_id).first()
+    existing = db.query(Character).filter(Character.id == char_id, Character.user_id == user.id).first()
     if not existing:
         db.close()
         return JSONResponse({"error": "Персонаж не найден или не принадлежит вам"}, 404)
@@ -395,9 +486,13 @@ async def update_character(char_id: int, char: CharacterCreate, user_id: int):
     return {"id": char_id, "name": char_name, "success": True}
 
 @app.get("/api/characters/{char_id}")
-async def get_character(char_id: int, user_id: int):
+async def get_character(char_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    char = db.query(Character).filter(Character.id == char_id, Character.user_id == user_id).first()
+    char = db.query(Character).filter(Character.id == char_id, Character.user_id == user.id).first()
     if not char:
         db.close()
         return JSONResponse({"error": "Персонаж не найден"}, 404)
@@ -417,9 +512,13 @@ async def get_character(char_id: int, user_id: int):
     }
 
 @app.delete("/api/characters/{char_id}")
-async def delete_character(char_id: int, user_id: int):
+async def delete_character(char_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    char = db.query(Character).filter(Character.id == char_id, Character.user_id == user_id).first()
+    char = db.query(Character).filter(Character.id == char_id, Character.user_id == user.id).first()
     if not char:
         db.close()
         raise HTTPException(404, "Персонаж не найден")
@@ -431,9 +530,13 @@ async def delete_character(char_id: int, user_id: int):
 # --- МИРЫ ---
 
 @app.get("/api/worlds")
-async def get_worlds(user_id: int):
+async def get_worlds(token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    worlds = db.query(World).filter(World.created_by == user_id).all()
+    worlds = db.query(World).filter(World.created_by == user.id).all()
     db.close()
     return [{
         "id": w.id, "name": w.name, "description": w.description,
@@ -442,12 +545,13 @@ async def get_worlds(user_id: int):
     } for w in worlds]
 
 @app.post("/api/worlds")
-async def create_world(world: WorldCreate, user_id: int):
+async def create_world(world: WorldCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    if not db.query(User).filter(User.id == user_id).first():
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
-    new_world = World(**world.dict(), created_by=user_id)
+    new_world = World(**world.dict(), created_by=user.id)
     db.add(new_world)
     db.commit()
     db.refresh(new_world)
@@ -457,9 +561,13 @@ async def create_world(world: WorldCreate, user_id: int):
     return {"id": world_id, "name": world_name, "success": True}
 
 @app.put("/api/worlds/{world_id}")
-async def update_world(world_id: int, world: WorldCreate, user_id: int):
+async def update_world(world_id: int, world: WorldCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    existing = db.query(World).filter(World.id == world_id, World.created_by == user_id).first()
+    existing = db.query(World).filter(World.id == world_id, World.created_by == user.id).first()
     if not existing:
         db.close()
         return JSONResponse({"error": "Мир не найден или не принадлежит вам"}, 404)
@@ -479,9 +587,13 @@ async def update_world(world_id: int, world: WorldCreate, user_id: int):
     return {"id": world_id, "name": world_name, "success": True}
 
 @app.get("/api/worlds/{world_id}")
-async def get_world(world_id: int, user_id: int):
+async def get_world(world_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    world = db.query(World).filter(World.id == world_id, World.created_by == user_id).first()
+    world = db.query(World).filter(World.id == world_id, World.created_by == user.id).first()
     if not world:
         db.close()
         return JSONResponse({"error": "Мир не найден"}, 404)
@@ -498,9 +610,13 @@ async def get_world(world_id: int, user_id: int):
     }
 
 @app.delete("/api/worlds/{world_id}")
-async def delete_world(world_id: int, user_id: int):
+async def delete_world(world_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    world = db.query(World).filter(World.id == world_id, World.created_by == user_id).first()
+    world = db.query(World).filter(World.id == world_id, World.created_by == user.id).first()
     if not world:
         db.close()
         raise HTTPException(404, "Мир не найден")
@@ -528,10 +644,14 @@ async def get_public_worlds(limit: int = 20, offset: int = 0, search: str = ""):
 # --- ПЕРСОНЫ ---
 
 @app.get("/api/personas")
-async def get_personas(user_id: int):
+async def get_personas(token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
     try:
-        personas = db.query(Persona).filter(Persona.user_id == user_id).all()
+        personas = db.query(Persona).filter(Persona.user_id == user.id).all()
         db.close()
         return [{
             "id": p.id,
@@ -552,13 +672,13 @@ async def get_personas(user_id: int):
         return JSONResponse({"error": str(e)}, 500)
 
 @app.post("/api/personas")
-async def create_persona(persona: PersonaCreate, user_id: int):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+async def create_persona(persona: PersonaCreate, token: str):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
-    new_persona = Persona(**persona.dict(), user_id=user_id)
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    db = SessionLocal()
+    new_persona = Persona(**persona.dict(), user_id=user.id)
     db.add(new_persona)
     db.commit()
     db.refresh(new_persona)
@@ -571,9 +691,13 @@ async def create_persona(persona: PersonaCreate, user_id: int):
     return {"id": persona_id, "name": persona_name, "success": True}
 
 @app.put("/api/personas/{persona_id}")
-async def update_persona(persona_id: int, persona: PersonaCreate, user_id: int):
+async def update_persona(persona_id: int, persona: PersonaCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    existing = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user_id).first()
+    existing = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user.id).first()
     if not existing:
         db.close()
         return JSONResponse({"error": "Персона не найдена или не принадлежит вам"}, 404)
@@ -595,9 +719,13 @@ async def update_persona(persona_id: int, persona: PersonaCreate, user_id: int):
     return {"id": persona_id, "name": persona_name, "success": True}
 
 @app.get("/api/personas/{persona_id}")
-async def get_persona(persona_id: int, user_id: int):
+async def get_persona(persona_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user_id).first()
+    persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user.id).first()
     if not persona:
         db.close()
         return JSONResponse({"error": "Персона не найдена"}, 404)
@@ -617,13 +745,13 @@ async def get_persona(persona_id: int, user_id: int):
     }
 
 @app.post("/api/personas/{persona_id}/activate")
-async def activate_persona(persona_id: int, user_id: int):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+async def activate_persona(persona_id: int, token: str):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        raise HTTPException(404, "Пользователь не найден")
-    persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user_id).first()
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    db = SessionLocal()
+    persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user.id).first()
     if not persona:
         db.close()
         raise HTTPException(404, "Персона не найдена")
@@ -633,9 +761,13 @@ async def activate_persona(persona_id: int, user_id: int):
     return {"success": True}
 
 @app.delete("/api/personas/{persona_id}")
-async def delete_persona(persona_id: int, user_id: int):
+async def delete_persona(persona_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user_id).first()
+    persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user.id).first()
     if not persona:
         db.close()
         raise HTTPException(404, "Персона не найдена")
@@ -647,9 +779,13 @@ async def delete_persona(persona_id: int, user_id: int):
 # --- ПАМЯТЬ ---
 
 @app.get("/api/memory")
-async def get_memory(user_id: int, character_id: Optional[int] = None):
+async def get_memory(token: str, character_id: Optional[int] = None):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    query = db.query(Memory).filter(Memory.user_id == user_id)
+    query = db.query(Memory).filter(Memory.user_id == user.id)
     if character_id:
         query = query.filter(Memory.character_id == character_id)
     memories = query.order_by(Memory.importance.desc()).all()
@@ -661,13 +797,16 @@ async def get_memory(user_id: int, character_id: Optional[int] = None):
     } for m in memories]
 
 @app.post("/api/memory")
-async def create_memory(memory: MemoryCreate, user_id: int):
+async def create_memory(memory: MemoryCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user or not user.active_persona_id:
+    if not user.active_persona_id:
         db.close()
         return JSONResponse({"error": "Нет активной персоны"}, 400)
-    new_memory = Memory(**memory.dict(), user_id=user_id, persona_id=user.active_persona_id)
+    new_memory = Memory(**memory.dict(), user_id=user.id, persona_id=user.active_persona_id)
     db.add(new_memory)
     db.commit()
     db.refresh(new_memory)
@@ -677,9 +816,13 @@ async def create_memory(memory: MemoryCreate, user_id: int):
     return {"id": memory_id, "content": memory_content, "success": True}
 
 @app.delete("/api/memory/{memory_id}")
-async def delete_memory(memory_id: int, user_id: int):
+async def delete_memory(memory_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    memory = db.query(Memory).filter(Memory.id == memory_id, Memory.user_id == user_id).first()
+    memory = db.query(Memory).filter(Memory.id == memory_id, Memory.user_id == user.id).first()
     if not memory:
         db.close()
         raise HTTPException(404, "Воспоминание не найдено")
@@ -691,9 +834,13 @@ async def delete_memory(memory_id: int, user_id: int):
 # --- ЛОРБУК ---
 
 @app.get("/api/lore")
-async def get_lore(user_id: int, search: Optional[str] = None):
+async def get_lore(token: str, search: Optional[str] = None):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    query = db.query(LoreEntry).filter(LoreEntry.user_id == user_id)
+    query = db.query(LoreEntry).filter(LoreEntry.user_id == user.id)
     if search:
         query = query.filter(
             (LoreEntry.title.contains(search)) |
@@ -708,12 +855,13 @@ async def get_lore(user_id: int, search: Optional[str] = None):
     } for l in lore]
 
 @app.post("/api/lore")
-async def create_lore(lore: LoreCreate, user_id: int):
+async def create_lore(lore: LoreCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    if not db.query(User).filter(User.id == user_id).first():
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
-    new_lore = LoreEntry(**lore.dict(), user_id=user_id)
+    new_lore = LoreEntry(**lore.dict(), user_id=user.id)
     db.add(new_lore)
     db.commit()
     db.refresh(new_lore)
@@ -722,10 +870,39 @@ async def create_lore(lore: LoreCreate, user_id: int):
     db.close()
     return {"id": lore_id, "title": lore_title, "success": True}
 
-@app.delete("/api/lore/{lore_id}")
-async def delete_lore(lore_id: int, user_id: int):
+@app.put("/api/lore/{lore_id}")
+async def update_lore(lore_id: int, lore: LoreCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    lore = db.query(LoreEntry).filter(LoreEntry.id == lore_id, LoreEntry.user_id == user_id).first()
+    existing = db.query(LoreEntry).filter(LoreEntry.id == lore_id, LoreEntry.user_id == user.id).first()
+    if not existing:
+        db.close()
+        return JSONResponse({"error": "Запись не найдена"}, 404)
+    
+    existing.title = lore.title
+    existing.content = lore.content
+    existing.category = lore.category
+    existing.tags = lore.tags
+    existing.character_id = lore.character_id
+    existing.world_id = lore.world_id
+    existing.room_id = lore.room_id
+    existing.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(existing)
+    db.close()
+    return {"success": True}
+
+@app.delete("/api/lore/{lore_id}")
+async def delete_lore(lore_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    db = SessionLocal()
+    lore = db.query(LoreEntry).filter(LoreEntry.id == lore_id, LoreEntry.user_id == user.id).first()
     if not lore:
         db.close()
         raise HTTPException(404, "Запись не найдена")
@@ -737,9 +914,13 @@ async def delete_lore(lore_id: int, user_id: int):
 # --- КОМНАТЫ ---
 
 @app.get("/api/rooms")
-async def get_rooms(user_id: int):
+async def get_rooms(token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    rooms = db.query(Room).filter(Room.owner_id == user_id).all()
+    rooms = db.query(Room).filter(Room.owner_id == user.id).all()
     db.close()
     return [{
         "id": r.id, "name": r.name, "description": r.description,
@@ -748,12 +929,13 @@ async def get_rooms(user_id: int):
     } for r in rooms]
 
 @app.post("/api/rooms")
-async def create_room(room: RoomCreate, user_id: int):
+async def create_room(room: RoomCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    if not db.query(User).filter(User.id == user_id).first():
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
-    new_room = Room(**room.dict(), owner_id=user_id, members=[user_id])
+    new_room = Room(**room.dict(), owner_id=user.id, members=[user.id])
     db.add(new_room)
     db.commit()
     db.refresh(new_room)
@@ -763,9 +945,13 @@ async def create_room(room: RoomCreate, user_id: int):
     return {"id": room_id, "name": room_name, "success": True}
 
 @app.delete("/api/rooms/{room_id}")
-async def delete_room(room_id: int, user_id: int):
+async def delete_room(room_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user_id).first()
+    room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
     if not room:
         db.close()
         raise HTTPException(404, "Комната не найдена")
@@ -775,9 +961,13 @@ async def delete_room(room_id: int, user_id: int):
     return {"success": True}
 
 @app.post("/api/rooms/{room_id}/members")
-async def add_room_member(room_id: int, member_id: int, user_id: int):
+async def add_room_member(room_id: int, member_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user_id).first()
+    room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
     if not room:
         db.close()
         raise HTTPException(404, "Комната не найдена")
@@ -790,9 +980,13 @@ async def add_room_member(room_id: int, member_id: int, user_id: int):
     return {"success": True}
 
 @app.delete("/api/rooms/{room_id}/members/{member_id}")
-async def remove_room_member(room_id: int, member_id: int, user_id: int):
+async def remove_room_member(room_id: int, member_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
-    room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user_id).first()
+    room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
     if not room:
         db.close()
         raise HTTPException(404, "Комната не найдена")
@@ -807,18 +1001,20 @@ async def remove_room_member(room_id: int, member_id: int, user_id: int):
 # --- API КЛЮЧИ ---
 
 @app.get("/api/keys")
-async def get_api_keys(user_id: int):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
-    db.close()
+async def get_api_keys(token: str):
+    user = get_user_by_token(token)
     if not user:
-        raise HTTPException(404, "Пользователь не найден")
+        raise HTTPException(401, "Не авторизован")
     return {"keys": user.api_keys or {}}
 
 @app.put("/api/keys")
-async def update_api_keys(keys_data: ApiKeysUpdate, user_id: int):
+async def update_api_keys(keys_data: ApiKeysUpdate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        raise HTTPException(401, "Не авторизован")
+    
     db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user.id).first()
     if not user:
         db.close()
         raise HTTPException(404, "Пользователь не найден")
@@ -830,30 +1026,31 @@ async def update_api_keys(keys_data: ApiKeysUpdate, user_id: int):
 # --- ПРОФИЛЬ ---
 
 @app.get("/api/profile")
-async def get_profile(user_id: int):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+async def get_profile(token: str):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        raise HTTPException(404, "Пользователь не найден")
-    data = {
+        raise HTTPException(401, "Не авторизован")
+    
+    return {
         "username": user.username,
         "display_name": user.display_name or user.username,
         "avatar": user.avatar,
         "bio": user.bio or ""
     }
-    db.close()
-    return data
 
 @app.put("/api/profile")
 async def update_profile(
-    user_id: int,
+    token: str,
     display_name: Optional[str] = None,
     bio: Optional[str] = None,
     avatar: Optional[str] = None
 ):
+    user = get_user_by_token(token)
+    if not user:
+        raise HTTPException(401, "Не авторизован")
+    
     db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user.id).first()
     if not user:
         db.close()
         raise HTTPException(404, "Пользователь не найден")
@@ -870,15 +1067,15 @@ async def update_profile(
 # --- ЧАТ ---
 
 @app.post("/api/chat")
-async def chat(chat_req: ChatRequest, user_id: int):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+async def chat(chat_req: ChatRequest, token: str):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    db = SessionLocal()
 
     character = db.query(Character).filter(Character.id == chat_req.character_id).first()
-    if not character or (character.user_id != user_id and not character.is_public):
+    if not character or (character.user_id != user.id and not character.is_public):
         db.close()
         return JSONResponse({"error": "Персонаж не доступен"}, 404)
 
@@ -921,7 +1118,7 @@ async def chat(chat_req: ChatRequest, user_id: int):
 
     memories = db.query(Memory).filter(
         Memory.character_id == character.id,
-        Memory.user_id == user_id
+        Memory.user_id == user.id
     ).order_by(Memory.importance.desc()).limit(5).all()
 
     memory_text = ""
@@ -949,7 +1146,7 @@ async def chat(chat_req: ChatRequest, user_id: int):
 
     history = db.query(ChatHistory).filter(
         ChatHistory.character_id == character.id,
-        ChatHistory.user_id == user_id,
+        ChatHistory.user_id == user.id,
         ChatHistory.user_message != "__SESSION_START__"
     ).order_by(ChatHistory.timestamp.desc()).limit(5).all()
     history.reverse()
@@ -966,7 +1163,18 @@ async def chat(chat_req: ChatRequest, user_id: int):
     messages.append({"role": "user", "content": chat_req.message})
 
     api_keys = user.api_keys or {}
-    openai.api_key = api_keys.get("polza", POLZA_API_KEY)
+    
+    # Используем дефолтные значения, если ключи не заданы
+    api_key = api_keys.get("polza") or POLZA_API_KEY
+    model = api_keys.get("model") or POLZA_MODEL
+    
+    if not api_key or api_key == "your-default-api-key-here":
+        db.close()
+        return JSONResponse({
+            "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
+        }, 400)
+
+    openai.api_key = api_key
     openai.base_url = "https://polza.ai/api/v1/"
 
     max_tokens = 1500
@@ -975,7 +1183,7 @@ async def chat(chat_req: ChatRequest, user_id: int):
 
     try:
         response = openai.chat.completions.create(
-            model=api_keys.get("model", POLZA_MODEL),
+            model=model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens
@@ -985,7 +1193,7 @@ async def chat(chat_req: ChatRequest, user_id: int):
         bot_response = f"Ошибка AI: {str(e)}"
 
     chat_entry = ChatHistory(
-        user_id=user_id,
+        user_id=user.id,
         character_id=character.id,
         persona_id=persona_id,
         user_message=chat_req.message,
@@ -1002,7 +1210,7 @@ async def chat(chat_req: ChatRequest, user_id: int):
             is_auto=True,
             persona_id=persona_id,
             character_id=character.id,
-            user_id=user_id,
+            user_id=user.id,
             chat_id=chat_entry.id
         )
         db.add(memory)
@@ -1011,6 +1219,7 @@ async def chat(chat_req: ChatRequest, user_id: int):
     db.close()
 
     return {"response": bot_response, "character_id": character_id, "character_name": character_name}
+
 # ============================================
 # РЕГЕНЕРАЦИЯ ОТВЕТА
 # ============================================
@@ -1024,22 +1233,22 @@ class RegenerateRequest(BaseModel):
     max_tokens: Optional[int] = 1500
 
 @app.post("/api/chat/regenerate")
-async def regenerate(req: RegenerateRequest, user_id: int):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+async def regenerate(req: RegenerateRequest, token: str):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    db = SessionLocal()
 
     character = db.query(Character).filter(Character.id == req.character_id).first()
-    if not character or (character.user_id != user_id and not character.is_public):
+    if not character or (character.user_id != user.id and not character.is_public):
         db.close()
         return JSONResponse({"error": "Персонаж не доступен"}, 404)
 
     # Получаем последний диалог для контекста
     history = db.query(ChatHistory).filter(
         ChatHistory.character_id == req.character_id,
-        ChatHistory.user_id == user_id,
+        ChatHistory.user_id == user.id,
         ChatHistory.user_message != "__SESSION_START__"
     ).order_by(ChatHistory.timestamp.desc()).limit(10).all()
     history.reverse()
@@ -1074,7 +1283,7 @@ async def regenerate(req: RegenerateRequest, user_id: int):
     # Память
     memories = db.query(Memory).filter(
         Memory.character_id == req.character_id,
-        Memory.user_id == user_id
+        Memory.user_id == user.id
     ).order_by(Memory.importance.desc()).limit(5).all()
 
     if memories:
@@ -1093,12 +1302,23 @@ async def regenerate(req: RegenerateRequest, user_id: int):
     messages.append({"role": "user", "content": req.user_message})
 
     api_keys = user.api_keys or {}
-    openai.api_key = api_keys.get("polza", POLZA_API_KEY)
+    
+    # Используем дефолтные значения, если ключи не заданы
+    api_key = api_keys.get("polza") or POLZA_API_KEY
+    model = api_keys.get("model") or POLZA_MODEL
+    
+    if not api_key or api_key == "your-default-api-key-here":
+        db.close()
+        return JSONResponse({
+            "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
+        }, 400)
+
+    openai.api_key = api_key
     openai.base_url = "https://polza.ai/api/v1/"
 
     try:
         response = openai.chat.completions.create(
-            model=api_keys.get("model", POLZA_MODEL),
+            model=model,
             messages=messages,
             temperature=req.temperature,
             max_tokens=req.max_tokens
@@ -1108,7 +1328,7 @@ async def regenerate(req: RegenerateRequest, user_id: int):
         # Обновляем последнее сообщение бота в базе
         last_entry = db.query(ChatHistory).filter(
             ChatHistory.character_id == req.character_id,
-            ChatHistory.user_id == user_id,
+            ChatHistory.user_id == user.id,
             ChatHistory.user_message == req.user_message
         ).order_by(ChatHistory.timestamp.desc()).first()
 
@@ -1123,25 +1343,26 @@ async def regenerate(req: RegenerateRequest, user_id: int):
     except Exception as e:
         db.close()
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
+
 # ============================================
 # ИСТОРИЯ ЧАТА
 # ============================================
 
 @app.get("/api/chat/history")
-async def get_chat_history(user_id: int, character_id: int, limit: int = 50):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+async def get_chat_history(token: str, character_id: int, limit: int = 50):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    db = SessionLocal()
     character = db.query(Character).filter(Character.id == character_id).first()
-    if not character or (character.user_id != user_id and not character.is_public):
+    if not character or (character.user_id != user.id and not character.is_public):
         db.close()
         return JSONResponse({"error": "Персонаж не доступен"}, 404)
 
     history = db.query(ChatHistory).filter(
         ChatHistory.character_id == character_id,
-        ChatHistory.user_id == user_id,
+        ChatHistory.user_id == user.id,
         ChatHistory.user_message != "__SESSION_START__"
     ).order_by(ChatHistory.timestamp.asc()).limit(limit).all()
     db.close()
@@ -1156,17 +1377,16 @@ async def get_chat_history(user_id: int, character_id: int, limit: int = 50):
 # ============================================
 
 @app.put("/api/chat/message")
-async def edit_message(req: EditMessageRequest, user_id: int):
-    db = SessionLocal()
-
-    user = db.query(User).filter(User.id == user_id).first()
+async def edit_message(req: EditMessageRequest, token: str):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    db = SessionLocal()
 
     chat_entry = db.query(ChatHistory).filter(
         ChatHistory.id == req.message_id,
-        ChatHistory.user_id == user_id
+        ChatHistory.user_id == user.id
     ).first()
 
     if not chat_entry:
@@ -1198,21 +1418,20 @@ async def edit_message(req: EditMessageRequest, user_id: int):
 # ============================================
 
 @app.post("/api/chat/{character_id}/clear")
-async def clear_chat(character_id: int, user_id: int):
+async def clear_chat(character_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
 
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
-
     character = db.query(Character).filter(Character.id == character_id).first()
-    if not character or (character.user_id != user_id and not character.is_public):
+    if not character or (character.user_id != user.id and not character.is_public):
         db.close()
         return JSONResponse({"error": "Персонаж не доступен"}, 404)
 
     new_session_marker = ChatHistory(
-        user_id=user_id,
+        user_id=user.id,
         character_id=character_id,
         user_message="__SESSION_START__",
         bot_response="__SESSION_START__",
@@ -1231,7 +1450,8 @@ async def clear_chat(character_id: int, user_id: int):
         "message": "Чат очищен",
         "session_id": session_id
     }
-    # ============================================
+    
+# ============================================
 # ГЕНЕРАЦИЯ ПЕРСОНАЖА ЧЕРЕЗ ИИ
 # ============================================
 
@@ -1244,15 +1464,26 @@ class GenerateRequest(BaseModel):
 # ============================================
 
 @app.post("/api/generate/character")
-async def generate_character(req: GenerateRequest, user_id: int):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+async def generate_character(req: GenerateRequest, token: str):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    db = SessionLocal()
 
     api_keys = user.api_keys or {}
-    openai.api_key = api_keys.get("polza", POLZA_API_KEY)
+    
+    # Используем дефолтные значения, если ключи не заданы
+    api_key = api_keys.get("polza") or POLZA_API_KEY
+    model = api_keys.get("model") or POLZA_MODEL
+    
+    if not api_key or api_key == "your-default-api-key-here":
+        db.close()
+        return JSONResponse({
+            "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
+        }, 400)
+
+    openai.api_key = api_key
     openai.base_url = "https://polza.ai/api/v1/"
 
     # Определяем, короткий это запрос или длинный
@@ -1287,7 +1518,7 @@ async def generate_character(req: GenerateRequest, user_id: int):
 
     try:
         response = openai.chat.completions.create(
-            model=api_keys.get("model", POLZA_MODEL),
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Создай персонажа по запросу: {req.prompt}"}
@@ -1305,7 +1536,7 @@ async def generate_character(req: GenerateRequest, user_id: int):
             char_data = {"name": "Сгенерированный персонаж", "description": result[:200]}
 
         new_char = Character(
-            user_id=user_id,
+            user_id=user.id,
             name=char_data.get('name', 'Без имени'),
             role=char_data.get('role', ''),
             description=char_data.get('description', ''),
@@ -1331,14 +1562,26 @@ async def generate_character(req: GenerateRequest, user_id: int):
 # ============================================
 
 @app.post("/api/generate/world")
-async def generate_world(req: GenerateRequest, user_id: int):
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+async def generate_world(req: GenerateRequest, token: str):
+    user = get_user_by_token(token)
     if not user:
-        db.close()
-        return JSONResponse({"error": "Пользователь не найден"}, 404)
+        return JSONResponse({"error": "Не авторизован"}, 401)
     
-    openai.api_key = POLZA_API_KEY
+    db = SessionLocal()
+    
+    api_keys = user.api_keys or {}
+    
+    # Используем дефолтные значения, если ключи не заданы
+    api_key = api_keys.get("polza") or POLZA_API_KEY
+    model = api_keys.get("model") or POLZA_MODEL
+    
+    if not api_key or api_key == "your-default-api-key-here":
+        db.close()
+        return JSONResponse({
+            "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
+        }, 400)
+    
+    openai.api_key = api_key
     openai.base_url = "https://polza.ai/api/v1/"
     
     # Определяем, короткий это запрос или длинный
@@ -1379,7 +1622,7 @@ async def generate_world(req: GenerateRequest, user_id: int):
     
     try:
         response = openai.chat.completions.create(
-            model=POLZA_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Создай мир по запросу: {req.prompt}"}
@@ -1405,7 +1648,7 @@ async def generate_world(req: GenerateRequest, user_id: int):
             }
         
         new_world = World(
-            created_by=user_id,
+            created_by=user.id,
             name=world_data.get('name', 'Без названия'),
             description=world_data.get('description', ''),
             genre=world_data.get('genre', ''),
@@ -1422,6 +1665,7 @@ async def generate_world(req: GenerateRequest, user_id: int):
     except Exception as e:
         db.close()
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
+
 # ============================================
 # ИСТОРИЯ ЧАТОВ (СПИСОК ДИАЛОГОВ)
 # ============================================
@@ -1429,15 +1673,13 @@ async def generate_world(req: GenerateRequest, user_id: int):
 from sqlalchemy import func
 
 @app.get("/api/chat/sessions")
-async def get_chat_sessions(user_id: int):
+async def get_chat_sessions(token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
     db = SessionLocal()
     try:
-        # Проверяем что пользователь существует
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            db.close()
-            return JSONResponse({"error": "Пользователь не найден"}, 404)
-
         # Получаем сессии
         sessions = db.query(
             ChatHistory.character_id,
@@ -1446,7 +1688,7 @@ async def get_chat_sessions(user_id: int):
             func.max(ChatHistory.timestamp).label('last_message_time'),
             func.substr(ChatHistory.bot_response, 1, 100).label('last_message')
         ).join(Character, ChatHistory.character_id == Character.id)\
-         .filter(ChatHistory.user_id == user_id, ChatHistory.user_message != "__SESSION_START__")\
+         .filter(ChatHistory.user_id == user.id, ChatHistory.user_message != "__SESSION_START__")\
          .group_by(ChatHistory.character_id)\
          .order_by(func.max(ChatHistory.timestamp).desc()).all()
 
@@ -2180,10 +2422,7 @@ HTML = r"""<!DOCTYPE html>
     
     <!-- ===== КНОПКИ АВТОРИЗАЦИИ ===== -->
     <div style="display:flex; flex-direction:column; gap:8px; margin-top:4px;">
-        <!-- Кнопка Войти (показывается когда пользователь не авторизован) -->
         <button class="auth-btn" id="authBtn" onclick="handleAuth()">Войти</button>
-        
-        <!-- Кнопка Выйти (показывается когда пользователь авторизован) -->
         <button class="auth-btn" id="logoutBtn" onclick="logout()" 
                 style="display:none; background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3);">
             🚪 Выйти
@@ -2226,16 +2465,16 @@ HTML = r"""<!DOCTYPE html>
     </div>
 
     <!-- ===== ЧАТЫ (ЛИЧНОЕ ПРОСТРАНСТВО) ===== -->
-<div id="page-chats" class="page">
-    <div class="flex-between">
-        <div>
-            <div class="page-title">Чаты</div>
-            <div class="page-desc">Все твои диалоги с персонажами</div>
+    <div id="page-chats" class="page">
+        <div class="flex-between">
+            <div>
+                <div class="page-title">Чаты</div>
+                <div class="page-desc">Все твои диалоги с персонажами</div>
+            </div>
+            <button class="btn-primary" onclick="loadChats()" style="padding:8px 14px; font-size:13px;">🔄 Обновить</button>
         </div>
-        <button class="btn-primary" onclick="loadChats()" style="padding:8px 14px; font-size:13px;">🔄 Обновить</button>
+        <div id="chatHistoryGrid" class="grid"></div>
     </div>
-    <div id="chatHistoryGrid" class="grid"></div>
-</div>
 
     <!-- ===== ПЕРСОНАЖИ (СОЗДАТЕЛЬ) ===== -->
     <div id="page-characters" class="page">
@@ -2269,38 +2508,38 @@ HTML = r"""<!DOCTYPE html>
             </select>
             <label class="checkbox-label"><input type="checkbox" id="charPublic"> Публичный</label>
             <div style="margin: 8px 0;">
-    <label style="color:#aaa; font-size:13px; display:block; margin-bottom:6px;">✨ Быстрая генерация персонажа</label>
+                <label style="color:#aaa; font-size:13px; display:block; margin-bottom:6px;">✨ Быстрая генерация персонажа</label>
 
-    <div style="display:flex; gap:10px;">
-        <input type="text" id="generatePrompt"
-               placeholder="Например: Опиши персонажа..."
-               style="flex:1; padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:14px;">
-        <button onclick="generateCharacter()" class="btn-primary" style="padding:8px 20px; white-space:nowrap;">✨ Создать</button>
-    </div>
+                <div style="display:flex; gap:10px;">
+                    <input type="text" id="generatePrompt"
+                           placeholder="Например: Опиши персонажа..."
+                           style="flex:1; padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:14px;">
+                    <button onclick="generateCharacter()" class="btn-primary" style="padding:8px 20px; white-space:nowrap;">✨ Создать</button>
+                </div>
 
-    <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
-        <span style="color:#555; font-size:11px;">Примеры:</span>
-        <span onclick="document.getElementById('generatePrompt').value='Максим Кац, российский политик'"
-              style="color:#666; font-size:11px; cursor:pointer; background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
-            🎯 Быстрый
-        </span>
-        <span onclick="document.getElementById('generatePrompt').value='Гарри Поттер - молодой волшебник из Хогвартса, храбрый и верный друзьям. Говорит с британским акцентом, часто с сарказмом.'"
-              style="color:#666; font-size:11px; cursor:pointer; background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
-            📚 Детальный
-        </span>
-        <span onclick="document.getElementById('generatePrompt').value='Тёмный эльф-лучник из Лесного Королевства. Мудрый, спокойный, любит звёзды. Говорит загадочно и с лёгкой иронией.'"
-              style="color:#666; font-size:11px; cursor:pointer; background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
-            🧝 Оригинальный
-        </span>
-    </div>
+                <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
+                    <span style="color:#555; font-size:11px;">Примеры:</span>
+                    <span onclick="document.getElementById('generatePrompt').value='Максим Кац, российский политик'"
+                          style="color:#666; font-size:11px; cursor:pointer; background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
+                        🎯 Быстрый
+                    </span>
+                    <span onclick="document.getElementById('generatePrompt').value='Гарри Поттер - молодой волшебник из Хогвартса, храбрый и верный друзьям. Говорит с британским акцентом, часто с сарказмом.'"
+                          style="color:#666; font-size:11px; cursor:pointer; background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
+                        📚 Детальный
+                    </span>
+                    <span onclick="document.getElementById('generatePrompt').value='Тёмный эльф-лучник из Лесного Королевства. Мудрый, спокойный, любит звёзды. Говорит загадочно и с лёгкой иронией.'"
+                          style="color:#666; font-size:11px; cursor:pointer; background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
+                        🧝 Оригинальный
+                    </span>
+                </div>
 
-    <div style="margin-top:4px;">
-        <span style="color:#444; font-size:10px;">
-            💡 Короткий запрос (до 10 слов) — AI додумает детали.
-            Длинный — точно выполнит инструкцию.
-        </span>
-    </div>
-</div>
+                <div style="margin-top:4px;">
+                    <span style="color:#444; font-size:10px;">
+                        💡 Короткий запрос (до 10 слов) — AI додумает детали.
+                        Длинный — точно выполнит инструкцию.
+                    </span>
+                </div>
+            </div>
             <button class="btn" onclick="saveCharacter()">Сохранить</button>
         </div>
     </div>
@@ -2328,14 +2567,14 @@ HTML = r"""<!DOCTYPE html>
                 <option value="">Без мира</option>
             </select>
             <label class="checkbox-label"><input type="checkbox" id="editCharPublic"> Публичный</label>
-           <div style="display:flex; gap:10px; margin:8px 0;">
-    <input type="text" id="editGeneratePrompt"
-           placeholder="Опиши нового персонажа для перегенерации..."
-           style="flex:1; padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:14px;">
-    <button onclick="regenerateCharacter()" class="btn-primary" style="padding:8px 20px; white-space:nowrap; display:flex; align-items:center; gap:6px;">
-        <span style="font-size:16px;">↻</span> Перегенерировать
-    </button>
-</div>
+            <div style="display:flex; gap:10px; margin:8px 0;">
+                <input type="text" id="editGeneratePrompt"
+                       placeholder="Опиши нового персонажа для перегенерации..."
+                       style="flex:1; padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:14px;">
+                <button onclick="regenerateCharacter()" class="btn-primary" style="padding:8px 20px; white-space:nowrap; display:flex; align-items:center; gap:6px;">
+                    <span style="font-size:16px;">↻</span> Перегенерировать
+                </button>
+            </div>
             <button class="btn" onclick="updateCharacter()">Сохранить изменения</button>
         </div>
     </div>
@@ -2368,22 +2607,22 @@ HTML = r"""<!DOCTYPE html>
             </label>
             <label class="checkbox-label"><input type="checkbox" id="worldPublic"> Публичный</label>
             <div style="margin: 8px 0;">
-    <label style="color:#aaa; font-size:13px; display:block; margin-bottom:6px;">✨ Быстрая генерация мира</label>
+                <label style="color:#aaa; font-size:13px; display:block; margin-bottom:6px;">✨ Быстрая генерация мира</label>
 
-    <div style="display:flex; gap:10px;">
-        <input type="text" id="generateWorldPrompt"
-               placeholder="Например: средневековое фэнтези с драконами"
-               style="flex:1; padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:14px;">
-        <button onclick="generateWorld()" class="btn-primary" style="padding:8px 20px; white-space:nowrap;">✨ Создать</button>
-    </div>
+                <div style="display:flex; gap:10px;">
+                    <input type="text" id="generateWorldPrompt"
+                           placeholder="Например: средневековое фэнтези с драконами"
+                           style="flex:1; padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:14px;">
+                    <button onclick="generateWorld()" class="btn-primary" style="padding:8px 20px; white-space:nowrap;">✨ Создать</button>
+                </div>
 
-    <div style="margin-top:4px;">
-        <span style="color:#444; font-size:10px;">
-            💡 Короткий запрос (до 10 слов) — AI додумает детали.
-            Длинный — точно выполнит инструкцию.
-        </span>
-    </div>
-</div>
+                <div style="margin-top:4px;">
+                    <span style="color:#444; font-size:10px;">
+                        💡 Короткий запрос (до 10 слов) — AI додумает детали.
+                        Длинный — точно выполнит инструкцию.
+                    </span>
+                </div>
+            </div>
             <button class="btn" onclick="saveWorld()">Сохранить</button>
         </div>
     </div>
@@ -2572,66 +2811,66 @@ HTML = r"""<!DOCTYPE html>
     </div>
 
     <!-- ===== ЧАТ ===== -->
-<div id="page-chat" class="page">
-    <div class="flex-between" style="margin-bottom:10px;">
-        <div style="display:flex; align-items:center; gap:12px;">
-            <button onclick="showPage('chats')" style="background:transparent; border:none; color:#888; font-size:28px; cursor:pointer; transition:0.3s; padding:0 8px;"
-                    onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
-                ←
-            </button>
-            <div>
-                <div class="page-title" id="chatTitle">Чат</div>
-                <div class="page-desc" id="chatSubtitle">Выбери персонажа и начни диалог</div>
+    <div id="page-chat" class="page">
+        <div class="flex-between" style="margin-bottom:10px;">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <button onclick="showPage('chats')" style="background:transparent; border:none; color:#888; font-size:28px; cursor:pointer; transition:0.3s; padding:0 8px;"
+                        onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
+                    ←
+                </button>
+                <div>
+                    <div class="page-title" id="chatTitle">Чат</div>
+                    <div class="page-desc" id="chatSubtitle">Выбери персонажа и начни диалог</div>
+                </div>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <button class="btn-primary" onclick="toggleChatSettings()" style="padding:8px 14px; font-size:13px;">Настройки</button>
+                <button class="btn-primary" onclick="openChatMemory()" style="padding:8px 14px; font-size:13px;">Память</button>
             </div>
         </div>
-        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-            <button class="btn-primary" onclick="toggleChatSettings()" style="padding:8px 14px; font-size:13px;">Настройки</button>
-            <button class="btn-primary" onclick="openChatMemory()" style="padding:8px 14px; font-size:13px;">Память</button>
-        </div>
-    </div>
 
         <!-- Панель настроек -->
-<div id="chatSettingsPanel" style="display:none; background:rgba(255,255,255,0.03); border:1px solid rgba(48,76,47,0.15); border-radius:14px; padding:16px 20px; margin-bottom:16px;">
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-        <div>
-            <label style="color:#aaa; font-size:13px;">Температура (креативность)</label>
-            <input type="range" id="chatTemperature" min="0" max="1.5" step="0.1" value="0.8" style="width:100%; accent-color:#304c2f;">
-            <span id="tempValue" style="color:#888; font-size:13px;">0.8</span>
-        </div>
-        <div>
-            <label style="color:#aaa; font-size:13px;">Длина ответов</label>
-            <div style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
-                <button class="chat-len-btn" data-len="short" onclick="setChatLength('short')" style="padding:4px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px;">Короткие</button>
-                <button class="chat-len-btn active" data-len="medium" onclick="setChatLength('medium')" style="padding:4px 12px; border-radius:12px; border:1px solid rgba(48,76,47,0.3); background:rgba(48,76,47,0.15); color:#fff; cursor:pointer; font-size:12px;">Средние</button>
-                <button class="chat-len-btn" data-len="long" onclick="setChatLength('long')" style="padding:4px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px;">Длинные</button>
+        <div id="chatSettingsPanel" style="display:none; background:rgba(255,255,255,0.03); border:1px solid rgba(48,76,47,0.15); border-radius:14px; padding:16px 20px; margin-bottom:16px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div>
+                    <label style="color:#aaa; font-size:13px;">Температура (креативность)</label>
+                    <input type="range" id="chatTemperature" min="0" max="1.5" step="0.1" value="0.8" style="width:100%; accent-color:#304c2f;">
+                    <span id="tempValue" style="color:#888; font-size:13px;">0.8</span>
+                </div>
+                <div>
+                    <label style="color:#aaa; font-size:13px;">Длина ответов</label>
+                    <div style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
+                        <button class="chat-len-btn" data-len="short" onclick="setChatLength('short')" style="padding:4px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px;">Короткие</button>
+                        <button class="chat-len-btn active" data-len="medium" onclick="setChatLength('medium')" style="padding:4px 12px; border-radius:12px; border:1px solid rgba(48,76,47,0.3); background:rgba(48,76,47,0.15); color:#fff; cursor:pointer; font-size:12px;">Средние</button>
+                        <button class="chat-len-btn" data-len="long" onclick="setChatLength('long')" style="padding:4px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px;">Длинные</button>
+                    </div>
+                </div>
+                <div>
+                    <label style="color:#aaa; font-size:13px;">Режим общения</label>
+                    <select id="chatMode" style="width:100%; padding:6px 10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.06); border-radius:8px; color:#fff; font-size:13px;">
+                        <option value="friendship">Дружба</option>
+                        <option value="flirt">Флирт</option>
+                        <option value="romance">Романтика</option>
+                        <option value="love">Любовное (18+)</option>
+                        <option value="all" selected>Всё и сразу</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="color:#aaa; font-size:13px;">Персона</label>
+                    <select id="chatPersonaSelect" style="width:100%; padding:6px 10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.06); border-radius:8px; color:#fff; font-size:13px;">
+                        <option value="">Без персоны</option>
+                    </select>
+                </div>
+            </div>
+            <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+                <button onclick="openChatLore()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">Лорбук</button>
+                <button onclick="openChatMemory()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">Память</button>
+                <button onclick="openCharacterEditor()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">Редактор</button>
+                <button onclick="clearChat()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">Начать заново</button>
+                <button onclick="saveCurrentChat()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(48,76,47,0.3); background:rgba(48,76,47,0.1); color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(48,76,47,0.2)'; this.style.color='#fff'" onmouseout="this.style.background='rgba(48,76,47,0.1)'; this.style.color='#888'">💾 Сохранить чат</button>
+                <button onclick="showChatHistory()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#888'">📜 История чата</button>
             </div>
         </div>
-        <div>
-            <label style="color:#aaa; font-size:13px;">Режим общения</label>
-            <select id="chatMode" style="width:100%; padding:6px 10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.06); border-radius:8px; color:#fff; font-size:13px;">
-                <option value="friendship">Дружба</option>
-                <option value="flirt">Флирт</option>
-                <option value="romance">Романтика</option>
-                <option value="love">Любовное (18+)</option>
-                <option value="all" selected>Всё и сразу</option>
-            </select>
-        </div>
-        <div>
-            <label style="color:#aaa; font-size:13px;">Персона</label>
-            <select id="chatPersonaSelect" style="width:100%; padding:6px 10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.06); border-radius:8px; color:#fff; font-size:13px;">
-                <option value="">Без персоны</option>
-            </select>
-        </div>
-    </div>
-    <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button onclick="openChatLore()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">Лорбук</button>
-        <button onclick="openChatMemory()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">Память</button>
-        <button onclick="openCharacterEditor()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">Редактор</button>
-        <button onclick="clearChat()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">Начать заново</button>
-        <button onclick="saveCurrentChat()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(48,76,47,0.3); background:rgba(48,76,47,0.1); color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(48,76,47,0.2)'; this.style.color='#fff'" onmouseout="this.style.background='rgba(48,76,47,0.1)'; this.style.color='#888'">💾 Сохранить чат</button>
-        <button onclick="showChatHistory()" style="padding:4px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#888; cursor:pointer; font-size:12px; transition:0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#888'">📜 История чата</button>
-    </div>
-</div>
 
         <!-- КОНТЕЙНЕР ЧАТА -->
         <div class="chat-container">
@@ -2717,6 +2956,7 @@ HTML = r"""<!DOCTYPE html>
         </div>
     </div>
 </div>
+
 <!-- ===== ИСТОРИЯ ЧАТОВ (МОДАЛЬНОЕ ОКНО) ===== -->
 <div id="chatHistoryModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center;">
     <div style="background:#1a1a1a; border-radius:20px; padding:30px; max-width:600px; width:90%; border:1px solid rgba(48,76,47,0.3); max-height:80vh; overflow-y:auto;">
@@ -2740,6 +2980,7 @@ HTML = r"""<!DOCTYPE html>
 // ============================================
 let currentUser = null;
 let userId = null;
+let authToken = null;
 let loreSearchTimeout = null;
 let libraryTab = 'characters';
 let libraryOffset = 0;
@@ -2755,6 +2996,7 @@ let editingWorldId = null;
 let editingPersonaId = null;
 let editingLoreId = null;
 let _personaModalCallback = null;
+let _pendingChatCharId = null;
 
 // ============================================
 // ЗАСТАВКА
@@ -2785,86 +3027,23 @@ if (saved) {
         const d = JSON.parse(saved);
         currentUser = d.username;
         userId = d.id;
+        authToken = d.token;
+        
         document.getElementById('authBtn').textContent = currentUser;
+        document.getElementById('authBtn').style.display = 'none';
+        document.getElementById('logoutBtn').style.display = 'block';
         document.getElementById('userInfo').textContent = '◌ ' + currentUser;
         document.getElementById('profileName').textContent = 'Добро пожаловать, ' + currentUser + '!';
         document.getElementById('cover').classList.add('hidden');
         document.querySelector('.hamburger-btn').style.display = 'block';
         loadProfile();
-    } catch(e) {}
-}
-
-// ============================================
-// ЗАГРУЗКА ПРОФИЛЯ
-// ============================================
-async function loadProfile() {
-    if (!userId) return;
-    try {
-        const r = await fetch('/api/profile?user_id=' + userId);
-        const data = await r.json();
-        document.getElementById('profileUsername').value = data.username;
-        document.getElementById('profileDisplayName').value = data.display_name || data.username;
-        document.getElementById('profileBio').value = data.bio || '';
-        if (data.avatar) {
-            document.getElementById('profileAvatarPreview').src = data.avatar;
-            document.getElementById('profileAvatarPreview').style.display = 'block';
-            document.getElementById('profileAvatarPlaceholder').style.display = 'none';
-            document.getElementById('profileAvatar').value = data.avatar;
-        }
-        loadApiKeys();
-    } catch(e) {}
-}
-
-// ============================================
-// ЗАГРУЗКА АВАТАРКИ
-// ============================================
-async function uploadAvatar(fileId, targetId, labelId) {
-    const fileInput = document.getElementById(fileId);
-    const file = fileInput.files[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-        const r = await fetch('/api/upload', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await r.json();
-        if (data.url) {
-            document.getElementById(targetId).value = data.url;
-            document.getElementById(labelId).textContent = '✓ Загружено';
-            if (fileId === 'profileAvatarFile') {
-                document.getElementById('profileAvatarPreview').src = data.url;
-                document.getElementById('profileAvatarPreview').style.display = 'block';
-                document.getElementById('profileAvatarPlaceholder').style.display = 'none';
-            }
-        }
     } catch(e) {
-        alert('Ошибка загрузки: ' + e.message);
-        document.getElementById(labelId).textContent = 'Ошибка загрузки';
+        console.error('Ошибка загрузки сохраненных данных:', e);
+        localStorage.removeItem('hyg_user');
     }
-}
-
-// ============================================
-// СОХРАНЕНИЕ ПРОФИЛЯ
-// ============================================
-async function saveProfile() {
-    if (!userId) { alert('Войдите чтобы сохранить профиль'); return; }
-    const data = {
-        display_name: document.getElementById('profileDisplayName').value.trim() || document.getElementById('profileUsername').value,
-        bio: document.getElementById('profileBio').value.trim(),
-        avatar: document.getElementById('profileAvatar').value
-    };
-    try {
-        await fetch('/api/profile?user_id=' + userId, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        alert('Профиль сохранён!');
-    } catch(e) { alert('Ошибка: ' + e.message); }
+} else {
+    document.getElementById('authBtn').style.display = 'block';
+    document.getElementById('logoutBtn').style.display = 'none';
 }
 
 // ============================================
@@ -2968,10 +3147,32 @@ async function register() {
         });
         const d = await r.json();
         if (d.success) {
-            alert('Регистрация успешна!');
-            showPage('login');
-        } else alert('Ошибка: ' + d.error);
-    } catch(e) { alert('Ошибка: ' + e.message); }
+            currentUser = d.username;
+            userId = d.user_id;
+            authToken = d.token;
+            
+            document.getElementById('authBtn').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'block';
+            document.getElementById('authBtn').textContent = currentUser;
+            document.getElementById('userInfo').textContent = '◌ ' + currentUser;
+            document.getElementById('profileName').textContent = 'Добро пожаловать, ' + currentUser + '!';
+            
+            localStorage.setItem('hyg_user', JSON.stringify({ 
+                username: currentUser, 
+                id: userId, 
+                token: authToken 
+            }));
+            
+            document.getElementById('cover').classList.add('hidden');
+            document.querySelector('.hamburger-btn').style.display = 'block';
+            showPage('home');
+            loadProfile();
+        } else {
+            alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
+        }
+    } catch(e) { 
+        alert('Ошибка: ' + e.message); 
+    }
 }
 
 async function login() {
@@ -2988,32 +3189,62 @@ async function login() {
         if (d.success) {
             currentUser = d.username;
             userId = d.user_id;
+            authToken = d.token;
+            
+            document.getElementById('authBtn').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'block';
             document.getElementById('authBtn').textContent = currentUser;
             document.getElementById('userInfo').textContent = '◌ ' + currentUser;
             document.getElementById('profileName').textContent = 'Добро пожаловать, ' + currentUser + '!';
             
-            document.getElementById('authBtn').style.display = 'none';
-            document.getElementById('logoutBtn').style.display = 'block';
+            localStorage.setItem('hyg_user', JSON.stringify({ 
+                username: currentUser, 
+                id: userId, 
+                token: authToken 
+            }));
             
-            localStorage.setItem('hyg_user', JSON.stringify({ username: currentUser, id: userId }));
             document.getElementById('cover').classList.add('hidden');
             document.querySelector('.hamburger-btn').style.display = 'block';
             showPage('home');
             loadProfile();
-        } else alert('Ошибка: ' + d.error);
-    } catch(e) { alert('Ошибка: ' + e.message);
+        } else {
+            alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
+        }
+    } catch(e) { 
+        alert('Ошибка: ' + e.message);
     }
 }
 
-function logout() {
+async function logout() {
+    if (!authToken) {
+        currentUser = null;
+        userId = null;
+        authToken = null;
+        localStorage.removeItem('hyg_user');
+        document.getElementById('authBtn').style.display = 'block';
+        document.getElementById('logoutBtn').style.display = 'none';
+        document.getElementById('userInfo').textContent = 'Не авторизован';
+        document.querySelector('.hamburger-btn').style.display = 'none';
+        showPage('home');
+        document.getElementById('cover').classList.remove('hidden');
+        return;
+    }
+    
+    try {
+        await fetch('/api/logout?token=' + encodeURIComponent(authToken), {
+            method: 'POST'
+        });
+    } catch(e) {
+        console.error('Ошибка при выходе:', e);
+    }
+    
     currentUser = null;
     userId = null;
+    authToken = null;
     localStorage.removeItem('hyg_user');
-    document.getElementById('authBtn').textContent = 'Войти';
     
     document.getElementById('authBtn').style.display = 'block';
     document.getElementById('logoutBtn').style.display = 'none';
-    
     document.getElementById('userInfo').textContent = 'Не авторизован';
     document.querySelector('.hamburger-btn').style.display = 'none';
     showPage('home');
@@ -3021,12 +3252,23 @@ function logout() {
 }
 
 // ============================================
+// ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ЗАПРОСОВ С ТОКЕНОМ
+// ============================================
+function getAuthUrl(url) {
+    if (authToken) {
+        const separator = url.includes('?') ? '&' : '?';
+        return url + separator + 'token=' + encodeURIComponent(authToken);
+    }
+    return url;
+}
+
+// ============================================
 // API КЛЮЧИ
 // ============================================
 async function loadApiKeys() {
-    if (!userId) return;
+    if (!authToken) return;
     try {
-        const r = await fetch('/api/keys?user_id=' + userId);
+        const r = await fetch(getAuthUrl('/api/keys'));
         const d = await r.json();
         if (d.keys) {
             document.getElementById('apiPolza').value = d.keys.polza || '';
@@ -3036,13 +3278,13 @@ async function loadApiKeys() {
 }
 
 async function saveApiKeys() {
-    if (!userId) { alert('Войдите чтобы сохранить ключи'); return; }
+    if (!authToken) { alert('Войдите чтобы сохранить ключи'); return; }
     const keys = {
         polza: document.getElementById('apiPolza').value.trim(),
         model: document.getElementById('apiModel').value.trim() || 'deepseek/deepseek-v4-flash'
     };
     try {
-        await fetch('/api/keys?user_id=' + userId, {
+        await fetch(getAuthUrl('/api/keys'), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ keys: keys })
@@ -3052,15 +3294,85 @@ async function saveApiKeys() {
 }
 
 // ============================================
+// ПРОФИЛЬ
+// ============================================
+async function loadProfile() {
+    if (!authToken) return;
+    try {
+        const r = await fetch(getAuthUrl('/api/profile'));
+        const data = await r.json();
+        document.getElementById('profileUsername').value = data.username;
+        document.getElementById('profileDisplayName').value = data.display_name || data.username;
+        document.getElementById('profileBio').value = data.bio || '';
+        if (data.avatar) {
+            document.getElementById('profileAvatarPreview').src = data.avatar;
+            document.getElementById('profileAvatarPreview').style.display = 'block';
+            document.getElementById('profileAvatarPlaceholder').style.display = 'none';
+            document.getElementById('profileAvatar').value = data.avatar;
+        }
+        loadApiKeys();
+    } catch(e) {}
+}
+
+async function saveProfile() {
+    if (!authToken) { alert('Войдите чтобы сохранить профиль'); return; }
+    const data = {
+        display_name: document.getElementById('profileDisplayName').value.trim() || document.getElementById('profileUsername').value,
+        bio: document.getElementById('profileBio').value.trim(),
+        avatar: document.getElementById('profileAvatar').value
+    };
+    try {
+        await fetch(getAuthUrl('/api/profile'), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        alert('Профиль сохранён!');
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+// ============================================
+// ЗАГРУЗКА АВАТАРКИ
+// ============================================
+async function uploadAvatar(fileId, targetId, labelId) {
+    const fileInput = document.getElementById(fileId);
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const r = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await r.json();
+        if (data.url) {
+            document.getElementById(targetId).value = data.url;
+            document.getElementById(labelId).textContent = '✓ Загружено';
+            if (fileId === 'profileAvatarFile') {
+                document.getElementById('profileAvatarPreview').src = data.url;
+                document.getElementById('profileAvatarPreview').style.display = 'block';
+                document.getElementById('profileAvatarPlaceholder').style.display = 'none';
+            }
+        }
+    } catch(e) {
+        alert('Ошибка загрузки: ' + e.message);
+        document.getElementById(labelId).textContent = 'Ошибка загрузки';
+    }
+}
+
+// ============================================
 // ПЕРСОНАЖИ
 // ============================================
 async function loadCharacters() {
-    if (!userId) {
+    if (!authToken) {
         document.getElementById('charactersGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть персонажей</div>';
         return;
     }
     try {
-        const r = await fetch('/api/characters?user_id=' + userId);
+        const r = await fetch(getAuthUrl('/api/characters'));
         const chars = await r.json();
         const grid = document.getElementById('charactersGrid');
         if (!chars || !chars.length) {
@@ -3096,7 +3408,7 @@ function showEditCharacter(charId) {
     editingCharacterId = charId;
     showPage('character-edit');
     loadWorldsSelect('editCharWorld');
-    fetch('/api/characters/' + charId + '?user_id=' + userId)
+    fetch(getAuthUrl('/api/characters/' + charId))
         .then(function(r) { return r.json(); })
         .then(function(char) {
             if (char.error) {
@@ -3124,7 +3436,7 @@ function showEditCharacter(charId) {
 }
 
 async function updateCharacter() {
-    if (!userId) { alert('Войдите чтобы редактировать персонажа'); return; }
+    if (!authToken) { alert('Войдите чтобы редактировать персонажа'); return; }
     if (!editingCharacterId) { alert('Персонаж не выбран'); return; }
     const data = {
         name: document.getElementById('editCharName').value.trim(),
@@ -3139,7 +3451,7 @@ async function updateCharacter() {
     };
     if (!data.name) { alert('Введите имя'); return; }
     try {
-        const r = await fetch('/api/characters/' + editingCharacterId + '?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/characters/' + editingCharacterId), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -3157,7 +3469,7 @@ async function updateCharacter() {
 }
 
 async function saveCharacter() {
-    if (!userId) { alert('Войдите чтобы создать персонажа'); return; }
+    if (!authToken) { alert('Войдите чтобы создать персонажа'); return; }
     const data = {
         name: document.getElementById('charName').value.trim(),
         role: document.getElementById('charRole').value.trim() || null,
@@ -3171,7 +3483,7 @@ async function saveCharacter() {
     };
     if (!data.name) { alert('Введите имя'); return; }
     try {
-        const r = await fetch('/api/characters?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/characters'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -3185,11 +3497,10 @@ async function saveCharacter() {
 async function deleteCharacter(id) {
     if (!confirm('Удалить персонажа?')) return;
     try {
-        const r = await fetch('/api/characters/' + id + '?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/characters/' + id), {
             method: 'DELETE'
         });
         const data = await r.json();
-
         if (data.success) {
             loadCharacters();
         } else {
@@ -3201,9 +3512,9 @@ async function deleteCharacter(id) {
 }
 
 async function loadWorldsSelect(selectId) {
-    if (!userId) return;
+    if (!authToken) return;
     try {
-        const r = await fetch('/api/worlds?user_id=' + userId);
+        const r = await fetch(getAuthUrl('/api/worlds'));
         const worlds = await r.json();
         const sel = document.getElementById(selectId);
         if (!sel) return;
@@ -3347,7 +3658,7 @@ function startChatWithPersona(charId, personaId) {
 
     showPage('chat');
 
-    fetch('/api/characters?user_id=' + userId)
+    fetch(getAuthUrl('/api/characters'))
         .then(function(r) { return r.json(); })
         .then(function(chars) {
             var char = chars.find(function(c) { return c.id === charId; });
@@ -3378,7 +3689,7 @@ function startChatWithPersona(charId, personaId) {
 }
 
 async function loadChatHistory(characterId) {
-    if (!userId) return;
+    if (!authToken) return;
     try {
         var savedPersonaId = localStorage.getItem('chat_persona_' + characterId);
         if (savedPersonaId) {
@@ -3391,13 +3702,13 @@ async function loadChatHistory(characterId) {
             }
         }
 
-        var r = await fetch('/api/chat/history?user_id=' + userId + '&character_id=' + characterId);
+        var r = await fetch(getAuthUrl('/api/chat/history?character_id=' + characterId));
         var history = await r.json();
         var div = document.getElementById('chatMessages');
         div.innerHTML = '';
 
         if (history.length === 0) {
-            fetch('/api/characters?user_id=' + userId)
+            fetch(getAuthUrl('/api/characters'))
                 .then(function(r) { return r.json(); })
                 .then(function(chars) {
                     var char = chars.find(function(c) { return c.id === characterId; });
@@ -3562,7 +3873,7 @@ async function regenerateMessage(btn) {
         const mode = document.getElementById('chatMode').value;
         const personaId = document.getElementById('chatPersonaSelect').value;
 
-        const r = await fetch('/api/chat/regenerate?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/chat/regenerate'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3680,7 +3991,7 @@ async function saveEdit(btn) {
     if (actions) actions.style.display = 'flex';
 
     try {
-        var r = await fetch('/api/chat/message?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/chat/message'), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3733,9 +4044,9 @@ function cancelEdit(btn) {
 }
 
 async function loadChatPersonas() {
-    if (!userId) return;
+    if (!authToken) return;
     try {
-        var r = await fetch('/api/personas?user_id=' + userId);
+        var r = await fetch(getAuthUrl('/api/personas'));
         var personas = await r.json();
         var sel = document.getElementById('chatPersonaSelect');
         sel.innerHTML = '<option value="">Без персоны</option>';
@@ -3749,7 +4060,7 @@ async function sendMessage() {
     var input = document.getElementById('chatInput');
     var msg = input.value.trim();
     if (!msg) return;
-    if (!userId) { alert('Войдите чтобы общаться'); return; }
+    if (!authToken) { alert('Войдите чтобы общаться'); return; }
     if (!chatCharacterId) { alert('Выберите персонажа'); return; }
 
     var msgId = 'msg_' + (++messageIdCounter);
@@ -3769,7 +4080,7 @@ async function sendMessage() {
         var mode = document.getElementById('chatMode').value;
         var personaId = document.getElementById('chatPersonaSelect').value;
 
-        var r = await fetch('/api/chat?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/chat'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3860,12 +4171,12 @@ function openCharacterEditor() {
 // МИРЫ
 // ============================================
 async function loadWorlds() {
-    if (!userId) {
+    if (!authToken) {
         document.getElementById('worldsGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть миры</div>';
         return;
     }
     try {
-        var r = await fetch('/api/worlds?user_id=' + userId);
+        var r = await fetch(getAuthUrl('/api/worlds'));
         var worlds = await r.json();
         var grid = document.getElementById('worldsGrid');
         if (!worlds || !worlds.length) {
@@ -3900,7 +4211,7 @@ function showCreateWorld() {
 function showEditWorld(worldId) {
     editingWorldId = worldId;
     showPage('world-edit');
-    fetch('/api/worlds/' + worldId + '?user_id=' + userId)
+    fetch(getAuthUrl('/api/worlds/' + worldId))
         .then(function(r) { return r.json(); })
         .then(function(world) {
             if (world.error) {
@@ -3924,7 +4235,7 @@ function showEditWorld(worldId) {
 }
 
 async function updateWorld() {
-    if (!userId) { alert('Войдите чтобы редактировать мир'); return; }
+    if (!authToken) { alert('Войдите чтобы редактировать мир'); return; }
     if (!editingWorldId) { alert('Мир не выбран'); return; }
     var data = {
         name: document.getElementById('editWorldName').value.trim(),
@@ -3937,7 +4248,7 @@ async function updateWorld() {
     };
     if (!data.name) { alert('Введите название'); return; }
     try {
-        var r = await fetch('/api/worlds/' + editingWorldId + '?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/worlds/' + editingWorldId), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -3955,7 +4266,7 @@ async function updateWorld() {
 }
 
 async function saveWorld() {
-    if (!userId) { alert('Войдите чтобы создать мир'); return; }
+    if (!authToken) { alert('Войдите чтобы создать мир'); return; }
     var data = {
         name: document.getElementById('worldName').value.trim(),
         genre: document.getElementById('worldGenre').value.trim() || null,
@@ -3967,7 +4278,7 @@ async function saveWorld() {
     };
     if (!data.name) { alert('Введите название'); return; }
     try {
-        var r = await fetch('/api/worlds?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/worlds'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -3981,7 +4292,7 @@ async function saveWorld() {
 async function deleteWorld(id) {
     if (!confirm('Удалить мир?')) return;
     try {
-        await fetch('/api/worlds/' + id + '?user_id=' + userId, { method: 'DELETE' });
+        await fetch(getAuthUrl('/api/worlds/' + id), { method: 'DELETE' });
         loadWorlds();
     } catch(e) { alert('Ошибка удаления'); }
 }
@@ -3990,12 +4301,12 @@ async function deleteWorld(id) {
 // ПЕРСОНЫ
 // ============================================
 async function loadPersonas() {
-    if (!userId) {
+    if (!authToken) {
         document.getElementById('personasGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть персон</div>';
         return;
     }
     try {
-        var r = await fetch('/api/personas?user_id=' + userId);
+        var r = await fetch(getAuthUrl('/api/personas'));
         var personas = await r.json();
         var grid = document.getElementById('personasGrid');
         if (!personas || !personas.length) {
@@ -4030,7 +4341,7 @@ function showCreatePersona() {
 function showEditPersona(personaId) {
     editingPersonaId = personaId;
     showPage('persona-edit');
-    fetch('/api/personas/' + personaId + '?user_id=' + userId)
+    fetch(getAuthUrl('/api/personas/' + personaId))
         .then(function(r) { return r.json(); })
         .then(function(persona) {
             if (persona.error) {
@@ -4055,7 +4366,7 @@ function showEditPersona(personaId) {
 }
 
 async function updatePersona() {
-    if (!userId) { alert('Войдите чтобы редактировать персону'); return; }
+    if (!authToken) { alert('Войдите чтобы редактировать персону'); return; }
     if (!editingPersonaId) { alert('Персона не выбрана'); return; }
     var data = {
         name: document.getElementById('editPersonaName').value.trim(),
@@ -4069,7 +4380,7 @@ async function updatePersona() {
     };
     if (!data.name) { alert('Введите имя'); return; }
     try {
-        var r = await fetch('/api/personas/' + editingPersonaId + '?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/personas/' + editingPersonaId), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -4087,7 +4398,7 @@ async function updatePersona() {
 }
 
 async function savePersona() {
-    if (!userId) { alert('Войдите чтобы создать персону'); return; }
+    if (!authToken) { alert('Войдите чтобы создать персону'); return; }
     var data = {
         name: document.getElementById('personaName').value.trim(),
         age: parseInt(document.getElementById('personaAge').value) || null,
@@ -4100,7 +4411,7 @@ async function savePersona() {
     };
     if (!data.name) { alert('Введите имя'); return; }
     try {
-        var r = await fetch('/api/personas?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/personas'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -4113,7 +4424,7 @@ async function savePersona() {
 
 async function activatePersona(id) {
     try {
-        await fetch('/api/personas/' + id + '/activate?user_id=' + userId, { method: 'POST' });
+        await fetch(getAuthUrl('/api/personas/' + id + '/activate'), { method: 'POST' });
         loadPersonas();
     } catch(e) { alert('Ошибка'); }
 }
@@ -4121,7 +4432,7 @@ async function activatePersona(id) {
 async function deletePersona(id) {
     if (!confirm('Удалить персону?')) return;
     try {
-        await fetch('/api/personas/' + id + '?user_id=' + userId, { method: 'DELETE' });
+        await fetch(getAuthUrl('/api/personas/' + id), { method: 'DELETE' });
         loadPersonas();
     } catch(e) { alert('Ошибка удаления'); }
 }
@@ -4130,12 +4441,12 @@ async function deletePersona(id) {
 // ПАМЯТЬ
 // ============================================
 async function loadMemory() {
-    if (!userId) {
+    if (!authToken) {
         document.getElementById('memoryGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть память</div>';
         return;
     }
     try {
-        var r = await fetch('/api/memory?user_id=' + userId);
+        var r = await fetch(getAuthUrl('/api/memory'));
         var memories = await r.json();
         var grid = document.getElementById('memoryGrid');
         if (!memories || !memories.length) {
@@ -4158,9 +4469,9 @@ async function loadMemory() {
 }
 
 async function loadMemoryCharacters() {
-    if (!userId) return;
+    if (!authToken) return;
     try {
-        var r = await fetch('/api/characters?user_id=' + userId);
+        var r = await fetch(getAuthUrl('/api/characters'));
         var chars = await r.json();
         var sel = document.getElementById('memoryCharacter');
         sel.innerHTML = '<option value="">Выбери персонажа</option>';
@@ -4178,7 +4489,7 @@ function showCreateMemory() {
 }
 
 async function saveMemory() {
-    if (!userId) { alert('Войдите чтобы создать воспоминание'); return; }
+    if (!authToken) { alert('Войдите чтобы создать воспоминание'); return; }
     var data = {
         content: document.getElementById('memoryContent').value.trim(),
         importance: parseFloat(document.getElementById('memoryImportance').value) || 1.0,
@@ -4187,7 +4498,7 @@ async function saveMemory() {
     };
     if (!data.content) { alert('Введите содержание'); return; }
     try {
-        var r = await fetch('/api/memory?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/memory'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -4201,7 +4512,7 @@ async function saveMemory() {
 async function deleteMemory(id) {
     if (!confirm('Удалить воспоминание?')) return;
     try {
-        await fetch('/api/memory/' + id + '?user_id=' + userId, { method: 'DELETE' });
+        await fetch(getAuthUrl('/api/memory/' + id), { method: 'DELETE' });
         loadMemory();
     } catch(e) { alert('Ошибка удаления'); }
 }
@@ -4211,13 +4522,13 @@ async function deleteMemory(id) {
 // ============================================
 
 async function loadChats() {
-    if (!userId) {
+    if (!authToken) {
         document.getElementById('chatHistoryGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть историю чатов</div>';
         return;
     }
 
     try {
-        const r = await fetch('/api/chat/sessions?user_id=' + userId);
+        const r = await fetch(getAuthUrl('/api/chat/sessions'));
         const sessions = await r.json();
         const grid = document.getElementById('chatHistoryGrid');
 
@@ -4253,12 +4564,12 @@ async function loadChats() {
 // КОМНАТЫ
 // ============================================
 async function loadRooms() {
-    if (!userId) {
+    if (!authToken) {
         document.getElementById('roomsGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть комнаты</div>';
         return;
     }
     try {
-        var r = await fetch('/api/rooms?user_id=' + userId);
+        var r = await fetch(getAuthUrl('/api/rooms'));
         var rooms = await r.json();
         var grid = document.getElementById('roomsGrid');
         if (!rooms || !rooms.length) {
@@ -4287,14 +4598,14 @@ function showCreateRoom() {
 }
 
 async function saveRoom() {
-    if (!userId) { alert('Войдите чтобы создать комнату'); return; }
+    if (!authToken) { alert('Войдите чтобы создать комнату'); return; }
     var data = {
         name: document.getElementById('roomName').value.trim(),
         description: document.getElementById('roomDesc').value.trim() || null
     };
     if (!data.name) { alert('Введите название'); return; }
     try {
-        var r = await fetch('/api/rooms?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/rooms'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -4308,7 +4619,7 @@ async function saveRoom() {
 async function deleteRoom(id) {
     if (!confirm('Удалить комнату?')) return;
     try {
-        await fetch('/api/rooms/' + id + '?user_id=' + userId, { method: 'DELETE' });
+        await fetch(getAuthUrl('/api/rooms/' + id), { method: 'DELETE' });
         loadRooms();
     } catch(e) { alert('Ошибка удаления'); }
 }
@@ -4317,13 +4628,13 @@ async function deleteRoom(id) {
 // ЛОРБУК
 // ============================================
 async function loadLore() {
-    if (!userId) {
+    if (!authToken) {
         document.getElementById('loreGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть лорбук</div>';
         return;
     }
     var search = document.getElementById('loreSearch')?.value || '';
     try {
-        var url = '/api/lore?user_id=' + userId + (search ? '&search=' + encodeURIComponent(search) : '');
+        var url = getAuthUrl('/api/lore' + (search ? '&search=' + encodeURIComponent(search) : ''));
         var r = await fetch(url);
         var lore = await r.json();
         var grid = document.getElementById('loreGrid');
@@ -4353,9 +4664,9 @@ document.getElementById('loreSearch')?.addEventListener('input', function() {
 });
 
 async function loadLoreSelects() {
-    if (!userId) return;
+    if (!authToken) return;
     try {
-        var r1 = await fetch('/api/characters?user_id=' + userId);
+        var r1 = await fetch(getAuthUrl('/api/characters'));
         var chars = await r1.json();
 
         var selChar = document.getElementById('loreCharacter');
@@ -4374,7 +4685,7 @@ async function loadLoreSelects() {
             });
         }
 
-        var r2 = await fetch('/api/worlds?user_id=' + userId);
+        var r2 = await fetch(getAuthUrl('/api/worlds'));
         var worlds = await r2.json();
 
         var selWorld = document.getElementById('loreWorld');
@@ -4393,7 +4704,7 @@ async function loadLoreSelects() {
             });
         }
 
-        var r3 = await fetch('/api/rooms?user_id=' + userId);
+        var r3 = await fetch(getAuthUrl('/api/rooms'));
         var rooms = await r3.json();
 
         var selRoom = document.getElementById('loreRoom');
@@ -4425,7 +4736,7 @@ function showCreateLore() {
 }
 
 async function saveLore() {
-    if (!userId) { alert('Войдите чтобы создать запись'); return; }
+    if (!authToken) { alert('Войдите чтобы создать запись'); return; }
     var tags = document.getElementById('loreTags').value.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t; });
     var data = {
         title: document.getElementById('loreTitle').value.trim(),
@@ -4439,7 +4750,7 @@ async function saveLore() {
     if (!data.title) { alert('Введите заголовок'); return; }
     if (!data.content) { alert('Введите содержание'); return; }
     try {
-        var r = await fetch('/api/lore?user_id=' + userId, {
+        var r = await fetch(getAuthUrl('/api/lore'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -4453,7 +4764,7 @@ async function saveLore() {
 async function deleteLore(id) {
     if (!confirm('Удалить запись?')) return;
     try {
-        await fetch('/api/lore/' + id + '?user_id=' + userId, { method: 'DELETE' });
+        await fetch(getAuthUrl('/api/lore/' + id), { method: 'DELETE' });
         loadLore();
     } catch(e) { alert('Ошибка удаления'); }
 }
@@ -4467,7 +4778,7 @@ async function editLore(loreId) {
     showPage('lore-edit');
 
     try {
-        const r = await fetch('/api/lore?user_id=' + userId);
+        const r = await fetch(getAuthUrl('/api/lore'));
         const lore = await r.json();
         const entry = lore.find(l => l.id === loreId);
 
@@ -4502,7 +4813,7 @@ async function editLore(loreId) {
 }
 
 async function updateLore() {
-    if (!userId) { alert('Войдите чтобы редактировать запись'); return; }
+    if (!authToken) { alert('Войдите чтобы редактировать запись'); return; }
 
     const loreId = document.getElementById('editLoreId').value;
     if (!loreId) { alert('Запись не выбрана'); return; }
@@ -4527,7 +4838,7 @@ async function updateLore() {
     if (!data.content) { alert('Введите содержание'); return; }
 
     try {
-        const r = await fetch('/api/lore/' + loreId + '?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/lore/' + loreId), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -4585,7 +4896,7 @@ async function clearChat() {
     }
 
     try {
-        const r = await fetch('/api/chat/' + chatCharacterId + '/clear?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/chat/' + chatCharacterId + '/clear'), {
             method: 'POST'
         });
         const data = await r.json();
@@ -4595,7 +4906,7 @@ async function clearChat() {
             div.innerHTML = '';
             chatGreetingSent = false;
 
-            fetch('/api/characters?user_id=' + userId)
+            fetch(getAuthUrl('/api/characters'))
                 .then(function(r) { return r.json(); })
                 .then(function(chars) {
                     var char = chars.find(function(c) { return c.id === chatCharacterId; });
@@ -4636,7 +4947,7 @@ async function clearChat() {
 function openPersonaModal(callback) {
     console.log('✅ openPersonaModal вызван');
 
-    if (!userId) {
+    if (!authToken) {
         alert('Войдите чтобы выбрать персону');
         return;
     }
@@ -4644,7 +4955,7 @@ function openPersonaModal(callback) {
     _personaModalCallback = callback;
     console.log('✅ _personaModalCallback сохранён');
 
-    fetch('/api/personas?user_id=' + userId)
+    fetch(getAuthUrl('/api/personas'))
         .then(function(r) {
             console.log('✅ Ответ от сервера:', r.status);
             return r.json();
@@ -4723,10 +5034,8 @@ function openPersonaModalFromChat() {
 
     openPersonaModal(function(personaId) {
         if (personaId) {
-            // Сохраняем выбранную персону
             localStorage.setItem('chat_persona_' + chatCharacterId, personaId);
 
-            // Обновляем select в настройках
             var sel = document.getElementById('chatPersonaSelect');
             for (var i = 0; i < sel.options.length; i++) {
                 if (sel.options[i].value == personaId) {
@@ -4735,8 +5044,7 @@ function openPersonaModalFromChat() {
                 }
             }
 
-            // Показываем уведомление в чате
-            fetch('/api/personas?user_id=' + userId)
+            fetch(getAuthUrl('/api/personas'))
                 .then(function(r) { return r.json(); })
                 .then(function(personas) {
                     var persona = personas.find(function(p) { return p.id === personaId; });
@@ -4749,12 +5057,13 @@ function openPersonaModalFromChat() {
         }
     });
 }
+
 // ============================================
 // ГЕНЕРАЦИЯ ПЕРСОНАЖА
 // ============================================
 
 async function generateCharacter() {
-    if (!userId) {
+    if (!authToken) {
         alert('Войдите чтобы создать персонажа');
         return;
     }
@@ -4773,7 +5082,7 @@ async function generateCharacter() {
     btn.disabled = true;
 
     try {
-        const r = await fetch('/api/generate/character?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/generate/character'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4803,7 +5112,7 @@ async function generateCharacter() {
 // ============================================
 
 async function generateWorld() {
-    if (!userId) {
+    if (!authToken) {
         alert('Войдите чтобы создать мир');
         return;
     }
@@ -4820,7 +5129,7 @@ async function generateWorld() {
     btn.disabled = true;
 
     try {
-        const r = await fetch('/api/generate/world?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/generate/world'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4849,7 +5158,7 @@ async function generateWorld() {
 // ============================================
 
 async function regenerateCharacter() {
-    if (!userId) {
+    if (!authToken) {
         alert('Войдите чтобы перегенерировать персонажа');
         return;
     }
@@ -4873,13 +5182,11 @@ async function regenerateCharacter() {
     btn.disabled = true;
 
     try {
-        // Сначала удаляем старого персонажа
-        await fetch('/api/characters/' + editingCharacterId + '?user_id=' + userId, {
+        await fetch(getAuthUrl('/api/characters/' + editingCharacterId), {
             method: 'DELETE'
         });
 
-        // Создаём нового
-        const r = await fetch('/api/generate/character?user_id=' + userId, {
+        const r = await fetch(getAuthUrl('/api/generate/character'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4903,11 +5210,11 @@ async function regenerateCharacter() {
         btn.disabled = false;
     }
 }
+
 // ============================================
 // ИСТОРИЯ ЧАТОВ (АРХИВ)
 // ============================================
 
-// Показываем модалку с историей
 function showChatHistory() {
     if (!chatCharacterId) {
         alert('Выберите персонажа');
@@ -4917,7 +5224,6 @@ function showChatHistory() {
     const modal = document.getElementById('chatHistoryModal');
     const list = document.getElementById('chatHistoryList');
 
-    // Загружаем сохранённые чаты из localStorage
     const savedChats = JSON.parse(localStorage.getItem('chat_history_' + chatCharacterId) || '[]');
 
     if (!savedChats.length) {
@@ -4944,19 +5250,16 @@ function showChatHistory() {
     modal.style.display = 'flex';
 }
 
-// Закрываем модалку
 function closeChatHistory() {
     document.getElementById('chatHistoryModal').style.display = 'none';
 }
 
-// Сохраняем текущий чат в историю
 function saveCurrentChat() {
     if (!chatCharacterId) {
         alert('Выберите персонажа');
         return;
     }
 
-    // Собираем все сообщения из чата
     const messages = [];
     document.querySelectorAll('.msg-wrapper').forEach(function(wrapper) {
         const content = wrapper.querySelector('.msg-content');
@@ -4979,7 +5282,6 @@ function saveCurrentChat() {
         messages: messages
     };
 
-    // Сохраняем в localStorage
     const saved = JSON.parse(localStorage.getItem('chat_history_' + chatCharacterId) || '[]');
     saved.push(chatData);
     localStorage.setItem('chat_history_' + chatCharacterId, JSON.stringify(saved));
@@ -4987,7 +5289,6 @@ function saveCurrentChat() {
     alert('✅ Чат сохранён в историю!');
 }
 
-// Загружаем сохранённый чат
 function loadSavedChat(characterId, index) {
     const saved = JSON.parse(localStorage.getItem('chat_history_' + characterId) || '[]');
     if (!saved[index]) {
@@ -5016,7 +5317,6 @@ function loadSavedChat(characterId, index) {
     alert('✅ Чат загружен!');
 }
 
-// Удаляем сохранённый чат
 function deleteSavedChat(characterId, index) {
     if (!confirm('Удалить этот сохранённый чат?')) {
         return;
@@ -5025,14 +5325,14 @@ function deleteSavedChat(characterId, index) {
     const saved = JSON.parse(localStorage.getItem('chat_history_' + characterId) || '[]');
     saved.splice(index, 1);
     localStorage.setItem('chat_history_' + characterId, JSON.stringify(saved));
-    showChatHistory(); // Обновляем список
+    showChatHistory();
 }
 
 // ============================================
 // ЗАПУСК
 // ============================================
 loadPopular();
-if (userId) loadProfile();
+if (authToken) loadProfile();
 console.log('H.Y.G. Portal loaded');
 console.log('User:', currentUser || 'Not logged in');
 </script>
