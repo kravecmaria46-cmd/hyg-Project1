@@ -38,22 +38,22 @@ POLZA_MODEL = os.environ.get("POLZA_MODEL", "deepseek/deepseek-v4-flash")
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///hyg_portal.db")
 
 if DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        echo=False
+    )
 else:
     # Оптимизированные настройки для Supabase
-    connect_args = {
-        "pool_size": 5,              # Небольшой пул для Supabase
-        "max_overflow": 10,          # Максимум 15 соединений всего
-        "pool_timeout": 30,          # Таймаут ожидания
-        "pool_recycle": 300,         # Пересоздавать каждые 5 минут
-        "pool_pre_ping": True,       # Проверять соединение перед использованием
-    }
-
-engine = create_engine(
-    DATABASE_URL, 
-    connect_args=connect_args,
-    echo=False  # Установите True для дебага
-)
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=5,              # Небольшой пул для Supabase
+        max_overflow=10,          # Максимум 15 соединений всего
+        pool_timeout=30,          # Таймаут ожидания
+        pool_recycle=300,         # Пересоздавать каждые 5 минут
+        pool_pre_ping=True,       # Проверять соединение перед использованием
+        echo=False               # Установите True для дебага
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)  
 Base = declarative_base()
