@@ -1487,6 +1487,56 @@ async def clear_chat(character_id: int, token: str):
             "session_id": new_session_marker.id
         }
 
+# --- СПИСОК ЧАТОВ (СЕССИЙ) ---
+
+@app.get("/api/chat/sessions")
+async def get_chat_sessions(token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        # Получаем все уникальные чаты пользователя
+        sessions = db.query(
+            ChatHistory.character_id,
+            func.max(ChatHistory.timestamp).label('last_time'),
+            func.count(ChatHistory.id).label('message_count')
+        ).filter(
+            ChatHistory.user_id == user.id,
+            ChatHistory.user_message != "__SESSION_START__"
+        ).group_by(
+            ChatHistory.character_id
+        ).order_by(
+            func.max(ChatHistory.timestamp).desc()
+        ).all()
+        
+        result = []
+        for session in sessions:
+            character = db.query(Character).filter(
+                Character.id == session.character_id
+            ).first()
+            
+            if character:
+                # Получаем последнее сообщение
+                last_msg = db.query(ChatHistory).filter(
+                    ChatHistory.character_id == session.character_id,
+                    ChatHistory.user_id == user.id,
+                    ChatHistory.user_message != "__SESSION_START__"
+                ).order_by(
+                    ChatHistory.timestamp.desc()
+                ).first()
+                
+                result.append({
+                    "character_id": character.id,
+                    "character_name": character.name,
+                    "avatar": character.avatar,
+                    "last_message": last_msg.user_message if last_msg else "",
+                    "last_message_time": session.last_time.strftime("%Y-%m-%d %H:%M") if session.last_time else "",
+                    "message_count": session.message_count
+                })
+        
+        return result
+
 # --- ГЕНЕРАЦИЯ ПЕРСОНАЖА ЧЕРЕЗ ИИ (FIXED) ---
 
 @app.post("/api/generate/world")
@@ -2219,6 +2269,182 @@ HTML = r"""<!DOCTYPE html>
             .cover h1 { font-size: 28px; }
             .cover .sub { font-size: 16px; }
         }
+        /* ===== МОБИЛЬНАЯ АДАПТАЦИЯ ===== */
+
+/* Для экранов меньше 768px (телефоны) */
+@media (max-width: 768px) {
+    /* Основной контент — меньше отступы */
+    .main {
+        padding: 15px 12px 30px !important;
+    }
+
+    /* Заголовки — меньше */
+    .page-title {
+        font-size: 22px !important;
+    }
+
+    /* Карточки — в 2 колонки */
+    .grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 12px !important;
+    }
+
+    /* Чат — на всю ширину */
+    .chat-container {
+        padding: 12px !important;
+        height: calc(100vh - 280px) !important;
+        min-height: 350px !important;
+    }
+
+    /* Сообщения в чате — на всю ширину */
+    .chat-messages .msg {
+        max-width: 95% !important;
+        font-size: 14px !important;
+    }
+
+    /* Поле ввода чата — удобное */
+    .chat-input-area {
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+    }
+    .chat-input-area input {
+        font-size: 16px !important; /* Чтобы не зумилось на iOS */
+        padding: 12px !important;
+        min-width: 100px !important;
+        flex: 1 1 60% !important;
+    }
+    .chat-input-area .btn {
+        padding: 12px 20px !important;
+        font-size: 14px !important;
+        flex: 1 1 30% !important;
+    }
+
+    /* Формы — на всю ширину */
+    .form-box {
+        padding: 20px 16px !important;
+        margin: 10px 0 !important;
+    }
+
+    /* Кнопки в карточках — в столбик */
+    .card .actions {
+        flex-direction: column !important;
+        gap: 4px !important;
+    }
+    .card .actions button {
+        width: 100% !important;
+        padding: 8px !important;
+        font-size: 13px !important;
+    }
+
+    /* Сайдбар — уже есть, оставляем */
+    .sidebar {
+        width: 280px !important;
+    }
+
+    /* Настройки чата — в столбик */
+    #chatSettingsPanel > div {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Кнопки в настройках чата — в строку */
+    #chatSettingsPanel .flex-between {
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+    #chatSettingsPanel .flex-between > div {
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+    }
+    #chatSettingsPanel .flex-between button {
+        flex: 1 !important;
+        min-width: 70px !important;
+        font-size: 11px !important;
+        padding: 4px 8px !important;
+    }
+}
+
+/* Для очень маленьких экранов (меньше 450px) */
+@media (max-width: 450px) {
+    .grid {
+        grid-template-columns: 1fr 1fr !important;
+        gap: 8px !important;
+    }
+
+    .cover h1 {
+        font-size: 28px !important;
+    }
+    .cover .sub {
+        font-size: 16px !important;
+    }
+
+    .page-title {
+        font-size: 18px !important;
+    }
+
+    .form-box input,
+    .form-box textarea,
+    .form-box select {
+        font-size: 16px !important; /* Чтобы не зумилось на iOS */
+        padding: 10px 12px !important;
+    }
+
+    .card {
+        padding: 12px 8px !important;
+    }
+    .card .name {
+        font-size: 14px !important;
+    }
+    .card .role {
+        font-size: 11px !important;
+    }
+    .card .avatar {
+        width: 48px !important;
+        height: 48px !important;
+        font-size: 24px !important;
+    }
+
+    /* Кнопки "Назад" в шапке */
+    .flex-between .btn-primary {
+        font-size: 12px !important;
+        padding: 6px 14px !important;
+    }
+
+    /* Кнопка гамбургера — чуть меньше */
+    .hamburger-btn {
+        padding: 8px 10px !important;
+        top: 12px !important;
+        left: 12px !important;
+    }
+    .hamburger-btn span {
+        width: 20px !important;
+        height: 2px !important;
+        margin: 3px 0 !important;
+    }
+
+    /* Чат */
+    .chat-messages .msg-content {
+        font-size: 14px !important;
+        padding: 8px 12px !important;
+        max-width: 100% !important;
+    }
+    .msg-actions {
+        opacity: 1 !important; /* Всегда показывать кнопки на телефоне */
+    }
+    .msg-actions button {
+        font-size: 12px !important;
+        padding: 2px 6px !important;
+    }
+
+    /* Поле ввода чата */
+    .chat-input-area input {
+        font-size: 16px !important;
+        padding: 10px 12px !important;
+    }
+    .chat-input-area .btn {
+        font-size: 13px !important;
+        padding: 10px 16px !important;
+    }
+}
     </style>
 </head>
 <body>
