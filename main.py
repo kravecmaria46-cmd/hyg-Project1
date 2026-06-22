@@ -1759,23 +1759,27 @@ HTML = r"""<!DOCTYPE html>
             transform: rotate(-45deg) translate(4px, -4px);
         }
         .sidebar {
-            position: fixed;
-            top: 0;
-            left: -280px;
-            width: 280px;
-            height: 100%;
-            background: #010405;
-            border-right: 1px solid rgba(48, 76, 47, 0.3);
-            padding: 30px 20px;
-            z-index: 150;
-            transition: left 0.3s ease;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-        }
-        .sidebar.open {
-            left: 0;
-        }
+    position: fixed;
+    top: 0;
+    left: -280px;
+    width: 280px;
+    height: 100%;
+    background: #010405;
+    border-right: 1px solid rgba(48, 76, 47, 0.3);
+    padding: 30px 20px;
+    z-index: 150;
+    transition: left 0.3s ease;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+.sidebar.open {
+    left: 0 !important;  /* <-- ДОБАВЬТЕ !important */
+}
+.sidebar.closed {           /* <-- ЭТО ВСТАВИТЬ СЮДА */
+    left: -280px !important;
+}
+
         .sidebar .logo {
             font-size: 24px;
             font-weight: 800;
