@@ -44,19 +44,16 @@ if DATABASE_URL.startswith("sqlite"):
         echo=False
     )
 else:
-    # Оптимизированные настройки для Supabase
+    # Оптимизированные настройки для Supabase - УВЕЛИЧЕННЫЙ ПУЛ
     engine = create_engine(
         DATABASE_URL,
-        pool_size=5,              # Небольшой пул для Supabase
-        max_overflow=10,          # Максимум 15 соединений всего
+        pool_size=10,             # Увеличено с 5 до 10
+        max_overflow=20,          # Увеличено с 10 до 20 (всего 30 соединений)
         pool_timeout=30,          # Таймаут ожидания
         pool_recycle=300,         # Пересоздавать каждые 5 минут
         pool_pre_ping=True,       # Проверять соединение перед использованием
         echo=False               # Установите True для дебага
     )
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)  
-Base = declarative_base()
 
 # ============================================
 # МОДЕЛИ
@@ -1355,115 +1352,6 @@ async def clear_chat(character_id: int, token: str):
 
 # --- ГЕНЕРАЦИЯ ПЕРСОНАЖА ЧЕРЕЗ ИИ (FIXED) ---
 
-@app.post("/api/generate/character")
-async def generate_character(req: GenerateRequest, token: str):
-    user = get_user_by_token(token)
-    if not user:
-        return JSONResponse({"error": "Не авторизован"}, 401)
-    
-    api_keys = user.api_keys or {}
-    api_key = api_keys.get("polza") or POLZA_API_KEY
-    model = api_keys.get("model") or POLZA_MODEL
-    
-    if not api_key or api_key == "your-default-api-key-here":
-        return JSONResponse({
-            "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
-        }, 400)
-
-    openai.api_key = api_key
-    openai.base_url = "https://polza.ai/api/v1/"
-
-    # Определяем, короткий это запрос или длинный
-    is_short = len(req.prompt.split()) < 10
-
-    if is_short:
-        system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
-        Пользователь дал КОРОТКИЙ запрос. Твоя задача:
-        1. Распознать кто это (известная личность, книжный персонаж, оригинальный)
-        2. Додумать недостающие детали (характер, внешность, манеру речи)
-        3. Сделать персонажа ЖИВЫМ и ИНТЕРЕСНЫМ
-
-        Сгенерируй персонажа в формате JSON с полями:
-        name, role, description, personality, backstory, appearance, greeting.
-
-        Если это известная личность - используй реальные факты о ней.
-        Если персонаж из книги/фильма - используй канон.
-        Если оригинальный - придумай крутую историю.
-
-        ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа! 
-        ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
-    else:
-        system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
-        Пользователь дал ПОДРОБНЫЙ запрос. Твоя задача:
-        1. Точно следовать всем указаниям пользователя
-        2. Не добавлять ничего от себя
-        3. Сохранить все детали из запроса
-
-        Сгенерируй персонажа в формате JSON с полями:
-        name, role, description, personality, backstory, appearance, greeting.
-
-        ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
-        ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
-
-    try:
-        response = openai.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Создай персонажа по запросу: {req.prompt}"}
-            ],
-            temperature=0.8,
-            max_tokens=1000
-        )
-        result = response.choices[0].message.content
-
-        # Пробуем найти JSON в ответе
-        json_match = re.search(r'\{.*\}', result, re.DOTALL)
-        if json_match:
-            try:
-                char_data = json.loads(json_match.group())
-            except json.JSONDecodeError:
-                # Если JSON невалидный, пробуем извлечь данные по-другому
-                char_data = {
-                    "name": "Сгенерированный персонаж",
-                    "description": result[:200]
-                }
-        else:
-            # Если JSON не найден, создаем персонажа из текста
-            lines = [line.strip() for line in result.split('\n') if line.strip()]
-            char_data = {
-                "name": lines[0][:50] if lines else "Сгенерированный персонаж",
-                "description": result[:200],
-                "personality": "",
-                "backstory": "",
-                "appearance": "",
-                "greeting": "Привет! Я здесь!",
-                "role": ""
-            }
-
-        # Сохраняем персонажа в БД
-        with SessionLocal() as db:
-            new_char = Character(
-                user_id=user.id,
-                name=char_data.get('name', 'Без имени'),
-                role=char_data.get('role', ''),
-                description=char_data.get('description', ''),
-                personality=char_data.get('personality', ''),
-                backstory=char_data.get('backstory', ''),
-                appearance=char_data.get('appearance', ''),
-                greeting=char_data.get('greeting', 'Привет! Я здесь!'),
-                world_id=req.world_id
-            )
-            db.add(new_char)
-            db.commit()
-            db.refresh(new_char)
-            return {"success": True, "id": new_char.id, "name": new_char.name}
-
-    except Exception as e:
-        return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
-
-# --- ГЕНЕРАЦИЯ МИРА (FIXED) ---
-
 @app.post("/api/generate/world")
 async def generate_world(req: GenerateRequest, token: str):
     user = get_user_by_token(token)
@@ -1575,44 +1463,6 @@ async def generate_world(req: GenerateRequest, token: str):
             
     except Exception as e:
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
-
-# --- ИСТОРИЯ ЧАТОВ (СПИСОК ДИАЛОГОВ) ---
-
-@app.get("/api/chat/sessions")
-async def get_chat_sessions(token: str):
-    user = get_user_by_token(token)
-    if not user:
-        return JSONResponse({"error": "Не авторизован"}, 401)
-    
-    with SessionLocal() as db:
-        try:
-            # Получаем сессии
-            sessions = db.query(
-                ChatHistory.character_id,
-                Character.name.label('character_name'),
-                Character.avatar,
-                func.max(ChatHistory.timestamp).label('last_message_time'),
-                func.substr(ChatHistory.bot_response, 1, 100).label('last_message')
-            ).join(Character, ChatHistory.character_id == Character.id)\
-             .filter(ChatHistory.user_id == user.id, ChatHistory.user_message != "__SESSION_START__")\
-             .group_by(ChatHistory.character_id)\
-             .order_by(func.max(ChatHistory.timestamp).desc()).all()
-
-            result = []
-            for s in sessions:
-                result.append({
-                    "character_id": s.character_id,
-                    "character_name": s.character_name or "Неизвестный персонаж",
-                    "avatar": s.avatar,
-                    "last_message": s.last_message or "Нет сообщений",
-                    "last_message_time": s.last_message_time.strftime("%d.%m.%Y %H:%M") if s.last_message_time else None
-                })
-
-            return result
-
-        except Exception as e:
-            print(f"❌ Ошибка в /api/chat/sessions: {str(e)}")
-            return JSONResponse({"error": str(e)}, 500)
 
 # ============================================
 # HTML ФРОНТЕНД (полный, без изменений)
