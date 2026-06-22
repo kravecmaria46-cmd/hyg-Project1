@@ -74,12 +74,6 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     username = Column(String(100), unique=True, nullable=False, index=True)
-    # ... остальные поля
-
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True)
-    username = Column(String(100), unique=True, nullable=False, index=True)
     password_hash = Column(String(200), nullable=False)
     avatar = Column(String(500), nullable=True)
     bio = Column(Text, nullable=True)
