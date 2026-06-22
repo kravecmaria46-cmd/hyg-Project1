@@ -5,3 +5,12 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hyg-db
+          property: connectionString
+      - key: POLZA_API_KEY
+        sync: false
+      - key: POLZA_MODEL
+        value: deepseek/deepseek-v4-flash
