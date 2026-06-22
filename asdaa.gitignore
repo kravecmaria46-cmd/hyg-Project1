@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Базы данных
+*.db
+*.sqlite
+*.sqlite3
+hyg_portal.db
+*.db-journal
+
+# Загруженные файлы (аватарки)
+uploads/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.svg
+
+# Секреты и конфиги
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.crt
+
+# IDE и редакторы
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Логи
+*.log
+logs/
+
+# Временные файлы
+*.tmp
+*.temp
+.cache/
+*.pid
+
+# Render/деплой
+*.pid
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# PyCharm
+.idea/
+.pytest_cache/
+.mypy_cache/
+
+# Сохраняем папку uploads
+uploads/*
+!uploads/.gitkeep
