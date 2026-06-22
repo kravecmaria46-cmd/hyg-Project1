@@ -539,6 +539,129 @@ async def delete_character(char_id: int, token: str):
         db.commit()
         return {"success": True}
 
+# --- ГЕНЕРАЦИЯ ПЕРСОНАЖА ЧЕРЕЗ AI ---
+
+class GenerateRequest(BaseModel):
+    prompt: str
+    world_id: Optional[int] = None
+
+@app.post("/api/generate/character")
+async def generate_character(req: GenerateRequest, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    api_keys = user.api_keys or {}
+    api_key = api_keys.get("polza") or POLZA_API_KEY
+    model = api_keys.get("model") or POLZA_MODEL
+    
+    if not api_key or api_key == "your-default-api-key-here":
+        return JSONResponse({
+            "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
+        }, 400)
+    
+    openai.api_key = api_key
+    openai.base_url = "https://polza.ai/api/v1/"
+    
+    # Определяем, короткий это запрос или длинный
+    is_short = len(req.prompt.split()) < 10
+    
+    if is_short:
+        system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
+        Пользователь дал КОРОТКИЙ запрос. Твоя задача:
+        1. Распознать персонажа
+        2. Додумать недостающие детали (характер, внешность, предыстория)
+        3. Сделать персонажа ЖИВЫМ и ИНТЕРЕСНЫМ
+        
+        Сгенерируй персонажа в формате JSON с полями:
+        name, role, description, personality, backstory, appearance, greeting.
+        
+        Заполни ВСЕ поля качественно и подробно!
+        description - минимум 2-3 предложения.
+        personality - минимум 2-3 предложения.
+        backstory - минимум 3-4 предложения.
+        appearance - минимум 2 предложения.
+        greeting - первое сообщение персонажа.
+        
+        ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
+        ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
+    else:
+        system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
+        Пользователь дал ПОДРОБНЫЙ запрос. Твоя задача:
+        1. Точно следовать всем указаниям пользователя
+        2. Не добавлять ничего от себя
+        3. Сохранить все детали из запроса
+        
+        Сгенерируй персонажа в формате JSON с полями:
+        name, role, description, personality, backstory, appearance, greeting.
+        
+        Заполни ВСЕ поля качественно и подробно!
+        
+        ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
+        ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
+    
+    try:
+        response = openai.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Создай персонажа по запросу: {req.prompt}"}
+            ],
+            temperature=0.9,
+            max_tokens=1500
+        )
+        result = response.choices[0].message.content
+        
+        # Пробуем найти JSON в ответе
+        import re
+        json_match = re.search(r'\{.*\}', result, re.DOTALL)
+        if json_match:
+            try:
+                char_data = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                lines = [line.strip() for line in result.split('\n') if line.strip()]
+                char_data = {
+                    "name": lines[0][:50] if lines else "Сгенерированный персонаж",
+                    "role": "Не указана",
+                    "description": result[:300],
+                    "personality": "Не указан",
+                    "backstory": "Не указана",
+                    "appearance": "Не указана",
+                    "greeting": "Привет! Я новый персонаж."
+                }
+        else:
+            lines = [line.strip() for line in result.split('\n') if line.strip()]
+            char_data = {
+                "name": lines[0][:50] if lines else "Сгенерированный персонаж",
+                "role": "Не указана",
+                "description": result[:300],
+                "personality": "Не указан",
+                "backstory": "Не указана",
+                "appearance": "Не указана",
+                "greeting": "Привет! Я новый персонаж."
+            }
+        
+        # Сохраняем персонажа в БД
+        with SessionLocal() as db:
+            new_char = Character(
+                user_id=user.id,
+                name=char_data.get('name', 'Без имени'),
+                role=char_data.get('role', ''),
+                description=char_data.get('description', ''),
+                personality=char_data.get('personality', ''),
+                backstory=char_data.get('backstory', ''),
+                appearance=char_data.get('appearance', ''),
+                greeting=char_data.get('greeting', 'Привет!'),
+                world_id=req.world_id if hasattr(req, 'world_id') else None
+            )
+            db.add(new_char)
+            db.commit()
+            db.refresh(new_char)
+            return {"success": True, "id": new_char.id, "name": new_char.name}
+            
+    except Exception as e:
+        return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
+        
 # --- МИРЫ ---
 
 @app.get("/api/worlds")
