@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """H.Y.G. PORTAL - БЭКЕНД (FULLY FIXED)"""
 
+# ============================================
+# ИМПОРТЫ
+# ============================================
+
 import os
 import json
 import bcrypt
@@ -25,6 +29,12 @@ nest_asyncio.apply()
 import asyncio
 
 # ============================================
+# СОЗДАЕМ БАЗОВЫЙ КЛАСС ДЛЯ МОДЕЛЕЙ
+# ============================================
+
+Base = declarative_base()  # <-- ЭТО БЫЛО ПРОПУЩЕНО!
+
+# ============================================
 # ДЕФОЛТНЫЕ ЗНАЧЕНИЯ ДЛЯ AI
 # ============================================
 
@@ -44,20 +54,27 @@ if DATABASE_URL.startswith("sqlite"):
         echo=False
     )
 else:
-    # Оптимизированные настройки для Supabase - УВЕЛИЧЕННЫЙ ПУЛ
     engine = create_engine(
         DATABASE_URL,
-        pool_size=10,             # Увеличено с 5 до 10
-        max_overflow=20,          # Увеличено с 10 до 20 (всего 30 соединений)
-        pool_timeout=30,          # Таймаут ожидания
-        pool_recycle=300,         # Пересоздавать каждые 5 минут
-        pool_pre_ping=True,       # Проверять соединение перед использованием
-        echo=False               # Установите True для дебага
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=30,
+        pool_recycle=300,
+        pool_pre_ping=True,
+        echo=False
     )
 
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 # ============================================
-# МОДЕЛИ
+# МОДЕЛИ (ТЕПЕРЬ Base ОПРЕДЕЛЕН!)
 # ============================================
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    # ... остальные поля
 
 class User(Base):
     __tablename__ = "users"
