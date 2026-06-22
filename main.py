@@ -551,19 +551,15 @@ async def create_world(world: WorldCreate, token: str):
         return JSONResponse({"error": "Не авторизован"}, 401)
     
     db = SessionLocal()
-    
-    # СОЗДАЁМ ЯВНО, БЕЗ world.dict()!
     new_world = World(
         name=world.name,
         description=world.description,
         genre=world.genre,
         setting=world.setting,
         rules=world.rules,
-        avatar=world.avatar if hasattr(world, 'avatar') else None,
-        is_public=world.is_public if hasattr(world, 'is_public') else False,
+        is_public=world.is_public,
         created_by=user.id
     )
-    
     db.add(new_world)
     db.commit()
     db.refresh(new_world)
