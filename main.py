@@ -196,19 +196,22 @@ except Exception as e:
 
 def create_session(user_id: int) -> str:
     """Создает новую сессию для пользователя"""
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(days=7)
+    
     with SessionLocal() as db:
         # Удаляем старые сессии этого пользователя
         db.query(Session).filter(Session.user_id == user_id).delete()
         
-        token = secrets.token_urlsafe(32)
         session = Session(
             user_id=user_id,
             session_token=token,
-            expires_at=datetime.utcnow() + timedelta(days=7)
+            expires_at=expires_at
         )
         db.add(session)
         db.commit()
-        return token
+    
+    return token  # <-- ✅ Сессия уже закрыта!
 
 def get_user_by_token(token: str) -> Optional[User]:
     """Получает пользователя по токену сессии"""
