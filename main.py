@@ -1667,7 +1667,7 @@ async def edit_message(req: EditMessageRequest, token: str):
             "old_content": old_content
         }
 
-# --- ОЧИСТКА ЧАТА ---
+# --- ОЧИСТКА / УДАЛЕНИЕ ВСЕХ СООБЩЕНИЙ С ПЕРСОНАЖЕМ ---
 
 @app.post("/api/chat/{character_id}/clear")
 async def clear_chat(character_id: int, token: str):
@@ -1680,21 +1680,23 @@ async def clear_chat(character_id: int, token: str):
         if not character or (character.user_id != user.id and not character.is_public):
             return JSONResponse({"error": "Персонаж не доступен"}, 404)
 
-        new_session_marker = ChatHistory(
-            user_id=user.id,
-            character_id=character_id,
-            user_message="__SESSION_START__",
-            bot_response="__SESSION_START__",
-            timestamp=datetime.utcnow()
-        )
-        db.add(new_session_marker)
+        # Удаляем ВСЕ сообщения с этим персонажем
+        db.query(ChatHistory).filter(
+            ChatHistory.character_id == character_id,
+            ChatHistory.user_id == user.id
+        ).delete()
+        
+        # Удаляем связанную память
+        db.query(Memory).filter(
+            Memory.character_id == character_id,
+            Memory.user_id == user.id
+        ).delete()
+        
         db.commit()
-        db.refresh(new_session_marker)
 
         return {
             "success": True,
-            "message": "Чат очищен",
-            "session_id": new_session_marker.id
+            "message": "Чат удалён"
         }
         
         # --- УДАЛЕНИЕ КОНКРЕТНОГО ДИАЛОГА (СЕССИИ) ---
@@ -5124,15 +5126,17 @@ async function loadChats() {
         grid.innerHTML = sessions.map(function(s) {
             const avatarHtml = s.avatar ? '<img src="'+s.avatar+'">' : '✦';
             const lastMsg = s.last_message.length > 60 ? s.last_message.slice(0, 60) + '...' : s.last_message;
+            const chatId = s.chat_id || s.character_id;
 
             return `
-                <div class="card" onclick="startChat(${s.character_id})" style="cursor:pointer;">
+                <div class="card" style="position:relative; cursor:pointer;">
                     <div class="avatar">${avatarHtml}</div>
                     <div class="name">${s.character_name}</div>
                     <div class="role" style="font-size:12px; color:#666; margin-top:4px;">${s.last_message_time || 'Недавно'}</div>
                     <div style="font-size:13px; color:#888; margin-top:6px; font-style:italic; text-align:left; padding:0 4px;">"${lastMsg}"</div>
                     <div class="actions" style="margin-top:10px;">
                         <button onclick="event.stopPropagation(); startChat(${s.character_id})" style="background:rgba(48,76,47,0.3);">💬 Продолжить</button>
+                        <button onclick="event.stopPropagation(); deleteChatSession(${s.character_id}, '${s.character_name}')" style="background:rgba(180,40,40,0.2); color:#ff4444; border:1px solid rgba(180,40,40,0.3);">🗑️ Удалить</button>
                     </div>
                 </div>
             `;
