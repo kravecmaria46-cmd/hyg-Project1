@@ -1195,6 +1195,61 @@ async def update_profile(
             db_user.avatar = avatar
         db.commit()
         return {"success": True}
+        
+        # --- УДАЛЕНИЕ АККАУНТА ---
+
+@app.delete("/api/account")
+async def delete_account(token: str):
+    """Полностью удаляет аккаунт пользователя и все связанные данные"""
+    user = get_user_by_token(token)
+    if not user:
+        raise HTTPException(401, "Не авторизован")
+    
+    with SessionLocal() as db:
+        user_id = user.id
+        
+        # Удаляем все данные пользователя в правильном порядке (сначала зависимые)
+        
+        # 1. Сессии
+        db.query(Session).filter(Session.user_id == user_id).delete()
+        
+        # 2. Чаты
+        db.query(ChatHistory).filter(ChatHistory.user_id == user_id).delete()
+        
+        # 3. Память (иерархическая)
+        db.query(MemoryHierarchy).filter(MemoryHierarchy.user_id == user_id).delete()
+        
+        # 4. Консолидация памяти
+        db.query(MemoryConsolidation).filter(MemoryConsolidation.user_id == user_id).delete()
+        
+        # 5. Обычная память
+        db.query(Memory).filter(Memory.user_id == user_id).delete()
+        
+        # 6. Факты о пользователе
+        db.query(UserMemory).filter(UserMemory.user_id == user_id).delete()
+        
+        # 7. Лорбук
+        db.query(LoreEntry).filter(LoreEntry.user_id == user_id).delete()
+        
+        # 8. Комнаты
+        db.query(Room).filter(Room.owner_id == user_id).delete()
+        
+        # 9. Миры
+        db.query(World).filter(World.created_by == user_id).delete()
+        
+        # 10. Персоны
+        db.query(Persona).filter(Persona.user_id == user_id).delete()
+        
+        # 11. Персонажи (сначала удаляем, т.к. на них ссылаются другие таблицы)
+        # Но т.к. другие таблицы уже удалены, можно удалять
+        db.query(Character).filter(Character.user_id == user_id).delete()
+        
+        # 12. Сам пользователь
+        db.delete(user)
+        
+        db.commit()
+        
+        return {"success": True, "message": "Аккаунт удалён"}
 
 # ============================================
 # ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ АНАЛИЗА СТИЛЯ
@@ -3473,6 +3528,19 @@ HTML = r"""<!DOCTYPE html>
                 <button class="btn" onclick="saveApiKeys()">Сохранить ключи</button>
             </div>
         </div>
+        <div style="margin-top:30px; max-width:500px;">
+        <div style="border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
+            <h3 style="color:#ff4444; font-weight:400; font-size:16px; margin-bottom:10px;">⚠️ Опасная зона</h3>
+            <p style="color:#666; font-size:13px; margin-bottom:12px;">
+                Удаление аккаунта приведёт к безвозвратной потере всех данных: персонажей, миров, чатов, памяти и настроек.
+            </p>
+            <button onclick="deleteAccount()" style="padding:10px 24px; background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3); border-radius:10px; color:#ff4444; cursor:pointer; font-size:14px; transition:0.3s;"
+                    onmouseover="this.style.background='rgba(180,40,40,0.35)'" 
+                    onmouseout="this.style.background='rgba(180,40,40,0.2)'">
+                🗑️ Удалить аккаунт
+            </button>
+        </div>
+    </div>
     </div>
 
     <!-- ===== ВХОД ===== -->
@@ -3895,6 +3963,75 @@ async function saveProfile() {
         });
         alert('Профиль сохранён!');
     } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+// ============================================
+// УДАЛЕНИЕ АККАУНТА
+// ============================================
+
+async function deleteAccount() {
+    if (!authToken) {
+        alert('Войдите чтобы удалить аккаунт');
+        return;
+    }
+
+    // Тройное подтверждение для безопасности
+    if (!confirm('⚠️ Вы уверены, что хотите удалить аккаунт?\n\nВсе ваши данные будут потеряны навсегда!')) {
+        return;
+    }
+
+    if (!confirm('❗ Это последнее предупреждение! Вы действительно хотите удалить аккаунт?')) {
+        return;
+    }
+
+    // Просим ввести логин для подтверждения
+    const login = prompt('Введите имя пользователя для подтверждения удаления:');
+    if (!login) {
+        alert('Удаление отменено');
+        return;
+    }
+
+    if (login !== currentUser) {
+        alert('❌ Имя пользователя не совпадает. Удаление отменено.');
+        return;
+    }
+
+    try {
+        const r = await fetch(getAuthUrl('/api/account'), {
+            method: 'DELETE'
+        });
+        
+        const data = await r.json();
+        
+        if (data.success) {
+            alert('✅ Аккаунт удалён. Все данные стёрты.');
+            
+            // Очищаем локальное хранилище
+            localStorage.clear();
+            
+            // Сбрасываем состояние
+            currentUser = null;
+            userId = null;
+            authToken = null;
+            
+            // Обновляем UI
+            document.getElementById('authBtn').style.display = 'block';
+            document.getElementById('logoutBtn').style.display = 'none';
+            document.getElementById('userInfo').textContent = 'Не авторизован';
+            document.querySelector('.hamburger-btn').style.display = 'none';
+            
+            // Показываем заставку
+            document.getElementById('cover').classList.remove('hidden');
+            document.getElementById('cover').style.display = 'flex';
+            
+            showPage('home');
+        } else {
+            alert('Ошибка при удалении аккаунта: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch(e) {
+        console.error('Ошибка удаления аккаунта:', e);
+        alert('Ошибка: ' + e.message);
+    }
 }
 
 // ============================================
