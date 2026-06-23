@@ -4484,8 +4484,8 @@ function addUserMessage(text, messageId = null) {
 
     var actions = document.createElement('div');
     actions.className = 'msg-actions';
-    actions.innerHTML = '<button class="edit-btn" onclick="startEditMessage(this)" title="Редактировать">✏️</button>';
-
+    actions.innerHTML = '<button class="edit-btn" onclick="startEditMessage(this)" title="Редактировать" /button>';
+    
     var avatarDiv = document.createElement('div');
     avatarDiv.className = 'msg-avatar';
     avatarDiv.title = 'Сменить персону';
@@ -4646,14 +4646,25 @@ async function regenerateMessage(btn) {
 
 function startEditMessage(btn) {
     var wrapper = btn.closest('.msg-wrapper');
-    if (!wrapper) return;
+    if (!wrapper) {
+        console.error('❌ Не найден wrapper');
+        return;
+    }
 
     var content = wrapper.querySelector('.msg-content');
-    if (!content) return;
+    if (!content) {
+        console.error('❌ Не найден msg-content');
+        return;
+    }
+
+    // Проверяем, не редактируется ли уже
+    if (wrapper.querySelector('.edit-container')) {
+        return;
+    }
 
     var originalText = content.textContent;
-    var isBot = wrapper.dataset.isBot === 'true';
-    var messageId = wrapper.dataset.messageId;
+    // Убираем "✎ отредактировано" и подобные пометки
+    var cleanText = originalText.replace(/✎ отредактировано/g, '').replace(/🔄 регенерировано/g, '').trim();
 
     var actions = wrapper.querySelector('.msg-actions');
     if (actions) actions.style.display = 'none';
@@ -4665,18 +4676,24 @@ function startEditMessage(btn) {
     var input = document.createElement('input');
     input.type = 'text';
     input.className = 'edit-input';
-    input.value = originalText;
+    input.value = cleanText;
     input.style.cssText = 'flex:1; padding:8px 12px; background:rgba(255,255,255,0.06); border:1px solid rgba(48,76,47,0.3); border-radius:8px; color:#fff; font-size:14px; font-family:inherit; outline:none;';
-    input.onkeypress = function(e) {
-        if (e.key === 'Enter') saveEdit(this);
-        if (e.key === 'Escape') cancelEdit(this);
+    input.onkeydown = function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveEdit(this);
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelEdit(this);
+        }
     };
 
     var editActions = document.createElement('div');
     editActions.className = 'edit-actions';
     editActions.innerHTML = `
-        <button class="save-btn" onclick="saveEdit(this)">💾 Сохранить</button>
-        <button class="cancel-edit-btn" onclick="cancelEdit(this)">✕ Отмена</button>
+        <button class="save-btn" onclick="saveEdit(this)" style="padding:4px 12px; border-radius:8px; border:1px solid rgba(48,76,47,0.3); background:rgba(48,76,47,0.2); color:#fff; cursor:pointer; font-size:12px;">💾</button>
+        <button class="cancel-edit-btn" onclick="cancelEdit(this)" style="padding:4px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:#888; cursor:pointer; font-size:12px;">✕</button>
     `;
 
     editContainer.appendChild(input);
@@ -4693,13 +4710,22 @@ function startEditMessage(btn) {
 
 async function saveEdit(btn) {
     var editContainer = btn.closest('.edit-container');
-    if (!editContainer) return;
+    if (!editContainer) {
+        console.error('❌ Не найден edit-container');
+        return;
+    }
 
     var wrapper = editContainer.closest('.msg-wrapper');
-    if (!wrapper) return;
+    if (!wrapper) {
+        console.error('❌ Не найден wrapper');
+        return;
+    }
 
     var input = editContainer.querySelector('.edit-input');
-    if (!input) return;
+    if (!input) {
+        console.error('❌ Не найден input');
+        return;
+    }
 
     var newText = input.value.trim();
     if (!newText) {
@@ -4708,10 +4734,16 @@ async function saveEdit(btn) {
     }
 
     var content = wrapper.querySelector('.msg-content');
+    if (!content) {
+        console.error('❌ Не найден msg-content');
+        return;
+    }
+
     var isBot = wrapper.dataset.isBot === 'true';
     var messageId = wrapper.dataset.messageId;
     var originalText = content.textContent;
 
+    // Показываем индикатор сохранения
     content.textContent = '⏳ Сохранение...';
     content.style.display = 'block';
     editContainer.remove();
@@ -4719,11 +4751,26 @@ async function saveEdit(btn) {
     if (actions) actions.style.display = 'flex';
 
     try {
+        // Извлекаем числовой ID из messageId (формат: msg_123)
+        var numericId = parseInt(messageId.replace('msg_', ''));
+        if (isNaN(numericId)) {
+            // Если ID не числовой, пробуем найти по индексу
+            console.warn('⚠️ Нечисловой messageId, ищем альтернативный способ');
+            // Просто обновляем локально
+            content.textContent = newText;
+            var editNote = document.createElement('span');
+            editNote.className = 'edit-note';
+            editNote.style.cssText = 'font-size:11px; color:#666; margin-left:8px;';
+            editNote.textContent = '✎ отредактировано';
+            content.appendChild(editNote);
+            return;
+        }
+
         var r = await fetch(getAuthUrl('/api/chat/message'), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                message_id: parseInt(messageId.replace('msg_', '')),
+                message_id: numericId,
                 new_content: newText,
                 is_bot: isBot
             })
@@ -4733,22 +4780,21 @@ async function saveEdit(btn) {
 
         if (data.success) {
             content.textContent = newText;
+            // Удаляем старые пометки
+            var oldNotes = content.querySelectorAll('.edit-note, .regen-note');
+            oldNotes.forEach(function(note) { note.remove(); });
+            
             var editNote = document.createElement('span');
+            editNote.className = 'edit-note';
             editNote.style.cssText = 'font-size:11px; color:#666; margin-left:8px;';
             editNote.textContent = '✎ отредактировано';
-
-            var oldNote = content.querySelector('.edit-note');
-            if (oldNote) oldNote.remove();
-
-            var textNode = document.createTextNode(content.textContent);
-            content.innerHTML = '';
-            content.appendChild(textNode);
             content.appendChild(editNote);
         } else {
             alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
             content.textContent = originalText;
         }
     } catch(e) {
+        console.error('❌ Ошибка сохранения:', e);
         alert('Ошибка: ' + e.message);
         content.textContent = originalText;
     }
@@ -4756,13 +4802,22 @@ async function saveEdit(btn) {
 
 function cancelEdit(btn) {
     var editContainer = btn.closest('.edit-container');
-    if (!editContainer) return;
+    if (!editContainer) {
+        console.error('❌ Не найден edit-container');
+        return;
+    }
 
     var wrapper = editContainer.closest('.msg-wrapper');
-    if (!wrapper) return;
+    if (!wrapper) {
+        console.error('❌ Не найден wrapper');
+        return;
+    }
 
     var content = wrapper.querySelector('.msg-content');
-    if (!content) return;
+    if (!content) {
+        console.error('❌ Не найден msg-content');
+        return;
+    }
 
     content.style.display = 'block';
     editContainer.remove();
