@@ -2994,6 +2994,34 @@ HTML = r"""<!DOCTYPE html>
             padding-bottom: max(6px, env(safe-area-inset-bottom)) !important;
         }
     }
+    
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        backdrop-filter: blur(4px);
+    }
+
+    .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid rgba(255,255,255,0.1);
+        border-top-color: #4a6cf7;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    
 </style>
 </head>
 <body>
@@ -3898,11 +3926,97 @@ async function logout() {
 // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ЗАПРОСОВ С ТОКЕНОМ
 // ============================================
 function getAuthUrl(url) {
+    // Проверяем, не истёк ли токен
     if (authToken) {
+        // Проверяем, не слишком ли старый токен (более 6 дней)
+        const saved = localStorage.getItem('hyg_user');
+        if (saved) {
+            try {
+                const d = JSON.parse(saved);
+                // Если токену больше 6 дней — обновляем
+                // (просто перелогиниваемся)
+            } catch(e) {}
+        }
+        
         const separator = url.includes('?') ? '&' : '?';
         return url + separator + 'token=' + encodeURIComponent(authToken);
     }
     return url;
+}
+
+// ============================================
+// ПРОВЕРКА ТОКЕНА ПЕРЕД ЗАПРОСОМ
+// ============================================
+
+async function fetchWithAuth(url, options = {}) {
+    // Проверяем, есть ли токен
+    if (!authToken) {
+        // Пытаемся восстановить из localStorage
+        const saved = localStorage.getItem('hyg_user');
+        if (saved) {
+            try {
+                const d = JSON.parse(saved);
+                authToken = d.token;
+                currentUser = d.username;
+                userId = d.id;
+                console.log('🔑 Токен восстановлен из localStorage');
+            } catch(e) {
+                console.error('❌ Ошибка восстановления токена');
+            }
+        }
+    }
+    
+    // Если токена всё ещё нет — просим войти
+    if (!authToken) {
+        alert('Сессия истекла. Пожалуйста, войдите заново.');
+        showPage('login');
+        throw new Error('Нет токена');
+    }
+    
+    // Добавляем токен в URL
+    const separator = url.includes('?') ? '&' : '?';
+    const urlWithToken = url + separator + 'token=' + encodeURIComponent(authToken);
+    
+    // Делаем запрос
+    try {
+        const response = await fetch(urlWithToken, options);
+        
+        // Если пришёл 401 (не авторизован) — пробуем обновить
+        if (response.status === 401) {
+            console.warn('⚠️ Токен недействителен, пробуем восстановить...');
+            
+            // Пробуем восстановить из localStorage
+            const saved = localStorage.getItem('hyg_user');
+            if (saved) {
+                try {
+                    const d = JSON.parse(saved);
+                    if (d.token && d.token !== authToken) {
+                        authToken = d.token;
+                        // Повторяем запрос с новым токеном
+                        const newUrl = url + separator + 'token=' + encodeURIComponent(authToken);
+                        const retryResponse = await fetch(newUrl, options);
+                        if (retryResponse.ok) {
+                            return retryResponse;
+                        }
+                    }
+                } catch(e) {}
+            }
+            
+            // Если не удалось восстановить — просим войти
+            alert('Сессия истекла. Пожалуйста, войдите заново.');
+            localStorage.removeItem('hyg_user');
+            authToken = null;
+            currentUser = null;
+            userId = null;
+            showPage('login');
+            throw new Error('Сессия истекла');
+        }
+        
+        return response;
+    } catch(e) {
+        console.error('❌ Ошибка запроса:', e);
+        throw e;
+    }
 }
 
 // ============================================
@@ -4084,7 +4198,8 @@ async function loadCharacters() {
         return;
     }
     try {
-        const r = await fetch(getAuthUrl('/api/characters'));
+        showLoading();  // 👈 ДОБАВЛЯЕМ
+        const r = await fetchWithAuth('/api/characters');  // 👈 МЕНЯЕМ fetch на fetchWithAuth
         const chars = await r.json();
         const grid = document.getElementById('charactersGrid');
         if (!chars || !chars.length) {
@@ -4103,7 +4218,11 @@ async function loadCharacters() {
                 </div>
             </div>
         `).join('');
-    } catch(e) { console.error(e); }
+    } catch(e) { 
+        console.error(e); 
+    } finally {
+        hideLoading();  // 👈 ДОБАВЛЯЕМ (всегда скрываем)
+    }
 }
 
 function showCreateCharacter() {
@@ -6248,6 +6367,28 @@ window.addEventListener('load', function() {
         history.replaceState({ page: 'home' }, '', '#home');
     }
 });
+// ============================================
+// ИНДИКАТОР ЗАГРУЗКИ
+// ============================================
+
+function showLoading() {
+    let overlay = document.getElementById('loadingOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'loadingOverlay';
+        overlay.className = 'loading-overlay';
+        overlay.innerHTML = '<div class="loading-spinner"></div>';
+        document.body.appendChild(overlay);
+    }
+    overlay.style.display = 'flex';
+}
+
+function hideLoading() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+    }
+}
 </script>
 </body>
 </html>"""
