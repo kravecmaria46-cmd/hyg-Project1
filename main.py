@@ -3030,7 +3030,7 @@ HTML = r"""<!DOCTYPE html>
                 <div class="page-title">Чаты</div>
                 <div class="page-desc">Все твои диалоги с персонажами</div>
             </div>
-            <button class="btn-primary" onclick="loadChats()" style="padding:8px 14px; font-size:13px;">🔄 Обновить</button>
+           <button class="btn-primary" onclick="loadChats()" style="padding:8px 14px; font-size:13px;">↻ Обновить</button>
         </div>
         <div id="chatHistoryGrid" class="grid"></div>
     </div>
@@ -3526,9 +3526,9 @@ HTML = r"""<!DOCTYPE html>
             <!-- Список сохранённых чатов -->
         </div>
                 <div style="margin-top:16px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.05); display:flex; gap:8px; flex-wrap:wrap;">
-            <button onclick="deleteAllChatsWithCharacter()" style="padding:8px 20px; background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3); border-radius:10px; color:#ff4444; cursor:pointer; font-size:13px;">
-                🗑️ Удалить все диалоги
-            </button>
+          <button onclick="deleteAllChatsWithCharacter()" style="padding:8px 20px; background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3); border-radius:10px; color:#ff4444; cursor:pointer; font-size:13px;">
+    ✕ Удалить все диалоги
+</button>
             <button onclick="closeChatHistory()" style="padding:8px 20px; background:transparent; border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#888; cursor:pointer; font-size:13px;">
                 Закрыть
             </button>
@@ -3952,7 +3952,7 @@ async function loadCharacters() {
                 <div class="role">${c.role || 'Без роли'}</div>
                 <div class="role" style="font-size:11px; color:#555;">${c.world_id ? '🌍 В мире' : ''}</div>
                 <div class="actions">
-                    <button onclick="event.stopPropagation(); showEditCharacter(${c.id})" style="background:rgba(48,76,47,0.3);">✏️ Редактировать</button>
+                    <button onclick="event.stopPropagation(); showEditCharacter(${c.id})" style="background:rgba(48,76,47,0.3);">✎ Редактировать</button>
                     <button onclick="event.stopPropagation(); deleteCharacter(${c.id})" class="danger">Удалить</button>
                 </div>
             </div>
@@ -4776,7 +4776,7 @@ async function loadWorlds() {
                     <div class="name">${w.name}</div>
                     <div class="role">${w.genre || 'Без жанра'}</div>
                     <div class="actions">
-                        <button onclick="event.stopPropagation(); showEditWorld(${w.id})" style="background:rgba(48,76,47,0.3);">✏️ Редактировать</button>
+                        <button onclick="event.stopPropagation(); showEditWorld(${w.id})" style="background:rgba(48,76,47,0.3);">✎ Редактировать</button>
                         <button onclick="event.stopPropagation(); deleteWorld(${w.id})" class="danger">Удалить</button>
                     </div>
                 </div>
@@ -4906,7 +4906,7 @@ async function loadPersonas() {
                     <div class="name">${p.name} ${p.is_active ? '●' : ''}</div>
                     <div class="role">${p.age || 'Возраст не указан'}</div>
                     <div class="actions">
-                        <button onclick="event.stopPropagation(); showEditPersona(${p.id})" style="background:rgba(48,76,47,0.3);">✏️ Редактировать</button>
+                        <button onclick="event.stopPropagation(); showEditPersona(${p.id})" style="background:rgba(48,76,47,0.3);">✎ Редактировать</button>
                         ${!p.is_active ? '<button onclick="event.stopPropagation(); activatePersona('+p.id+')">Активировать</button>' : ''}
                         <button onclick="event.stopPropagation(); deletePersona(${p.id})" class="danger">Удалить</button>
                     </div>
@@ -5149,6 +5149,49 @@ async function loadChats() {
 }
 
 // ============================================
+// УДАЛЕНИЕ ЧАТА (СЕССИИ)
+// ============================================
+
+async function deleteChatSession(characterId, characterName) {
+    if (!confirm(`🗑️ Вы уверены, что хотите удалить чат с "${characterName}"?\n\nВсе сообщения в этом чате будут удалены безвозвратно!`)) {
+        return;
+    }
+
+    try {
+        const clearR = await fetch(getAuthUrl('/api/chat/' + characterId + '/clear'), {
+            method: 'POST'
+        });
+        const clearData = await clearR.json();
+        
+        if (!clearData.success) {
+            alert('Ошибка при удалении чата');
+            return;
+        }
+        
+        localStorage.removeItem('chat_persona_' + characterId);
+        localStorage.removeItem('chat_history_' + characterId);
+        
+        loadChats();
+        
+        if (chatCharacterId == characterId) {
+            showPage('chats');
+            chatCharacterId = null;
+            chatCharacterName = null;
+            chatCharacterAvatar = null;
+            document.getElementById('chatTitle').textContent = 'Чат';
+            document.getElementById('chatSubtitle').textContent = 'Выбери персонажа и начни диалог';
+            document.getElementById('chatMessages').innerHTML = '<div style="color:#666;text-align:center;padding:36px 0;">Выбери персонажа и начни диалог</div>';
+        }
+        
+        alert(`✅ Чат с "${characterName}" удалён!`);
+        
+    } catch(e) {
+        console.error('Ошибка удаления чата:', e);
+        alert('Ошибка при удалении чата: ' + e.message);
+    }
+}
+
+// ============================================
 // КОМНАТЫ
 // ============================================
 async function loadRooms() {
@@ -5237,7 +5280,7 @@ async function loadLore() {
                     <div class="name">${l.title}</div>
                     <div class="role">${l.category || 'Без категории'}${l.character_id ? ' | привязано к персонажу' : ''}${l.world_id ? ' | привязано к миру' : ''}</div>
                     <div class="actions">
-                        <button onclick="event.stopPropagation(); editLore(${l.id})" style="background:rgba(48,76,47,0.3);">✏️ Редактировать</button>
+                        <button onclick="event.stopPropagation(); editLore(${l.id})" style="background:rgba(48,76,47,0.3);">✎ Редактировать</button>
                         <button onclick="event.stopPropagation(); deleteLore(${l.id})" class="danger">Удалить</button>
                     </div>
                 </div>
@@ -5835,8 +5878,8 @@ function showChatHistory() {
                         <div style="font-size:12px; color:#555; margin-top:2px; font-style:italic;">"${preview}"</div>
                     </div>
                     <div style="display:flex; gap:6px; flex-shrink:0;">
-                        <button onclick="loadSavedChat(${chatCharacterId}, ${index})" style="padding:4px 12px; background:rgba(48,76,47,0.3); border:none; border-radius:8px; color:#fff; cursor:pointer; font-size:12px;">📂 Загрузить</button>
-                        <button onclick="deleteSavedChat(${chatCharacterId}, ${index})" style="padding:4px 12px; background:rgba(180,40,40,0.2); border:none; border-radius:8px; color:#ff4444; cursor:pointer; font-size:12px;">🗑️ Удалить</button>
+                         <button onclick="loadSavedChat(${chatCharacterId}, ${index})" style="padding:4px 12px; background:rgba(48,76,47,0.3); border:none; border-radius:8px; color:#fff; cursor:pointer; font-size:12px;">📂 Загрузить</button>
+                        <button onclick="deleteSavedChat(${chatCharacterId}, ${index})" style="padding:4px 12px; background:rgba(180,40,40,0.2); border:none; border-radius:8px; color:#ff4444; cursor:pointer; font-size:12px;">✕</button>
                     </div>
                 </div>
             `;
