@@ -1223,21 +1223,23 @@ async def chat(chat_req: ChatRequest, token: str):
             persona_appearance = persona.appearance
             persona_id = persona.id
 
-       # Используем иерархическую память вместо старой
-memories = get_relevant_memory(user.id, character_id=character.id, limit=10)
+        # ========== ИЕРАРХИЧЕСКАЯ ПАМЯТЬ ==========
+        memories = get_relevant_memory(user.id, character_id=character.id, limit=10)
+        memory_text = ""
+        if memories:
+            memory_text = "\n\nВажные воспоминания:\n"
+            for m in memories:
+                memory_text += f"[{m['type'].upper()}] {m['content']}\n"
+        # ==========================================
 
-# Формируем контекст из иерархической памяти
-memory_text = ""
-if memories:
-    memory_text = "\n\nВажные воспоминания:\n"
-    for m in memories:
-        memory_text += f"[{m['type'].upper()}] {m['content']}\n"
-                # ========== ЛИЧНАЯ ПАМЯТЬ (ФАКТЫ О ПОЛЬЗОВАТЕЛЕ) ==========
+        # ========== ЛИЧНАЯ ПАМЯТЬ (ФАКТЫ О ПОЛЬЗОВАТЕЛЕ) ==========
         user_facts = load_user_memories(user.id)
         if user_facts:
-            system_prompt += "\n\nФакты о собеседнике:\n"
+            user_facts_text = "\n\nФакты о собеседнике:\n"
             for fact in user_facts:
-                system_prompt += f"- {fact}\n"
+                user_facts_text += f"- {fact}\n"
+        else:
+            user_facts_text = ""
         # ===========================================================
 
         system_prompt = f"Ты - {character_name}."
@@ -1256,13 +1258,16 @@ if memories:
             if persona_appearance: system_prompt += f"\nВнешность собеседника: {persona_appearance}"
 
         system_prompt += memory_text
+        system_prompt += user_facts_text
 
+        # ========== ЗАГРУЗКА ИСТОРИИ ЧАТА ==========
         history = db.query(ChatHistory).filter(
             ChatHistory.character_id == character.id,
             ChatHistory.user_id == user.id,
             ChatHistory.user_message != "__SESSION_START__"
         ).order_by(ChatHistory.timestamp.desc()).limit(5).all()
         history.reverse()
+        # ===========================================
 
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -1274,12 +1279,11 @@ if memories:
             messages.append({"role": "user", "content": h.user_message})
             messages.append({"role": "assistant", "content": h.bot_response})
         messages.append({"role": "user", "content": chat_req.message})
-        # ========== СЮДА ВСТАВЛЯЕМ НОВЫЙ КОД ==========
-        # Проверяем, не пора ли сделать суммаризацию
-        if len(messages) > 50:  # Если в истории больше 50 сообщений
-            summary = summarize_chat_history(messages)  # Сжимаем
+
+        # ========== АВТО-СУММАРИЗАЦИЯ ==========
+        if len(messages) > 50:
+            summary = summarize_chat_history(messages)
             if summary:
-                # Сохраняем сжатый пересказ в базу (как "сюжетную память")
                 with SessionLocal() as db_summary:
                     memory = Memory(
                         content=f"Сюжетная память: {summary}",
@@ -1292,6 +1296,7 @@ if memories:
                     )
                     db_summary.add(memory)
                     db_summary.commit()
+        # =======================================
 
         api_keys = user.api_keys or {}
         api_key = api_keys.get("polza") or POLZA_API_KEY
@@ -1331,7 +1336,7 @@ if memories:
         db.commit()
         db.refresh(chat_entry)
 
-                # ========== СОХРАНЯЕМ ФАКТЫ О ПОЛЬЗОВАТЕЛЕ ==========
+        # ========== СОХРАНЯЕМ ФАКТЫ О ПОЛЬЗОВАТЕЛЕ ==========
         if len(chat_req.message) > 20:
             save_user_fact(user.id, chat_req.message[:200], "chat")
         # ====================================================
