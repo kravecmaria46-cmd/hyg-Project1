@@ -1696,6 +1696,53 @@ async def clear_chat(character_id: int, token: str):
             "message": "Чат очищен",
             "session_id": new_session_marker.id
         }
+        
+        # --- УДАЛЕНИЕ КОНКРЕТНОГО ДИАЛОГА (СЕССИИ) ---
+
+@app.delete("/api/chat/session/{session_id}")
+async def delete_chat_session(session_id: int, token: str):
+    """Удаляет конкретный диалог (сессию) по ID"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        # Проверяем, что сессия принадлежит пользователю
+        chat = db.query(ChatHistory).filter(
+            ChatHistory.id == session_id,
+            ChatHistory.user_id == user.id
+        ).first()
+        
+        if not chat:
+            return JSONResponse({"error": "Диалог не найден"}, 404)
+        
+        # Находим все сообщения в этой сессии
+        # Сессия определяется по character_id и timestamp
+        # Ищем все сообщения с этим character_id, начиная с этого сообщения
+        session_start = chat.timestamp
+        
+        # Удаляем все сообщения этой сессии
+        db.query(ChatHistory).filter(
+            ChatHistory.character_id == chat.character_id,
+            ChatHistory.user_id == user.id,
+            ChatHistory.timestamp >= session_start,
+            ChatHistory.user_message != "__SESSION_START__"
+        ).delete()
+        
+        # Также удаляем маркер начала сессии
+        db.query(ChatHistory).filter(
+            ChatHistory.character_id == chat.character_id,
+            ChatHistory.user_id == user.id,
+            ChatHistory.user_message == "__SESSION_START__",
+            ChatHistory.timestamp <= session_start
+        ).delete()
+        
+        db.commit()
+        
+        return {"success": True, "message": "Диалог удалён"}
+
+
+# --- СПИСОК ЧАТОВ (СЕССИЙ) ---
 
 # --- СПИСОК ЧАТОВ (СЕССИЙ) ---
 
@@ -2270,16 +2317,16 @@ HTML = r"""<!DOCTYPE html>
     /* ===== ЧАТ (НОВЫЙ, КАК В С.АИ) ===== */
 
     .chat-container {
-        background: rgba(255,255,255,0.02);
-        border-radius: 14px;
-        padding: 0 12px 12px;
-        border: 1px solid rgba(48,76,47,0.1);
-        display: flex;
-        flex-direction: column;
-        height: calc(100vh - 200px);
-        min-height: 400px;
-        position: relative;
-    }
+    background: rgba(255,255,255,0.02);
+    border-radius: 14px;
+    padding: 0 12px 8px;
+    border: 1px solid rgba(48,76,47,0.1);
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 220px);
+    min-height: 350px;
+    position: relative;
+}
 
     .chat-messages {
         flex: 1;
@@ -2345,18 +2392,22 @@ HTML = r"""<!DOCTYPE html>
     }
 
     .chat-messages .msg-wrapper.user .msg-content {
-        background: #4a6cf7;
-        color: #fff;
-        border-bottom-right-radius: 4px;
-        border: 1px solid rgba(74,108,247,0.3);
-    }
+    background: rgba(74, 108, 247, 0.25);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+    border: 1px solid rgba(74, 108, 247, 0.2);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
 
-    .chat-messages .msg-wrapper.bot .msg-content {
-        background: #1e1e24;
-        color: #e0e0e0;
-        border-bottom-left-radius: 4px;
-        border: 1px solid #2a2a2e;
-    }
+.chat-messages .msg-wrapper.bot .msg-content {
+    background: rgba(30, 30, 36, 0.7);
+    color: #e0e0e0;
+    border-bottom-left-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
 
     .chat-messages .msg-time {
         font-size: 10px;
@@ -2452,16 +2503,15 @@ HTML = r"""<!DOCTYPE html>
     }
 
     .chat-input-area {
-        display: flex;
-        gap: 10px;
-        padding: 10px 0 6px;
-        border-top: 1px solid rgba(255,255,255,0.04);
-        flex-shrink: 0;
-        background: rgba(1,4,5,0.95);
-        margin: 0 -12px;
-        padding: 10px 12px 6px;
-    }
-
+    display: flex;
+    gap: 10px;
+    padding: 8px 0 4px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+    flex-shrink: 0;
+    background: rgba(1,4,5,0.95);
+    margin: 0 -12px;
+    padding: 8px 12px 4px;
+}
     .chat-input-area input {
         flex: 1;
         padding: 12px 16px;
@@ -2667,212 +2717,220 @@ HTML = r"""<!DOCTYPE html>
 
     /* ===== МОБИЛЬНАЯ АДАПТАЦИЯ ===== */
 
-    @media (max-width: 768px) {
-        .main {
-            padding: 20px 16px 30px;
-        }
-        .main.shifted {
-            margin-left: 0;
-        }
-        .sidebar {
-            width: 260px;
-            left: -260px;
-        }
-        .sidebar.open {
-            left: 0;
-        }
-        .hamburger-btn {
-            display: block;
-        }
-        .cover h1 {
-            font-size: 36px;
-        }
-        .grid {
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-        }
-        .form-box {
-            padding: 24px 20px;
-        }
-
-        /* Чат на мобилках */
-        .chat-container {
-            height: calc(100vh - 180px) !important;
-            min-height: 300px !important;
-            padding: 0 8px 8px !important;
-            border-radius: 10px !important;
-        }
-
-        .chat-messages {
-            padding: 12px 2px 6px !important;
-            gap: 2px !important;
-        }
-
-        .chat-messages .msg-wrapper {
-            max-width: 92% !important;
-            gap: 6px !important;
-        }
-
-        .chat-messages .msg-content {
-            font-size: 14px !important;
-            padding: 8px 14px !important;
-            border-radius: 16px !important;
-        }
-
-        .chat-messages .msg-avatar {
-            width: 28px !important;
-            height: 28px !important;
-            font-size: 12px !important;
-        }
-
-        .chat-messages .msg-actions {
-            opacity: 1 !important;
-        }
-        .chat-messages .msg-actions button {
-            font-size: 11px !important;
-            padding: 2px 6px !important;
-        }
-
-        .chat-input-area {
-            padding: 8px 8px 4px !important;
-            gap: 6px !important;
-            margin: 0 -8px !important;
-        }
-
-        .chat-input-area input {
-            font-size: 16px !important;
-            padding: 10px 14px !important;
-            border-radius: 20px !important;
-        }
-
-        .chat-input-area .btn {
-            font-size: 13px !important;
-            padding: 10px 18px !important;
-            border-radius: 20px !important;
-        }
-
-        .typing-indicator .dots {
-            padding: 8px 14px !important;
-            border-radius: 16px !important;
-        }
-        .typing-indicator .dots span {
-            width: 6px !important;
-            height: 6px !important;
-        }
-
-        .sidebar {
-            padding: 20px 14px !important;
-        }
-        .sidebar .logo {
-            font-size: 20px !important;
-            padding-bottom: 16px !important;
-            margin-bottom: 12px !important;
-        }
-        .sidebar .menu a {
-            padding: 8px 14px !important;
-            font-size: 14px !important;
-        }
-        .hamburger-btn {
-            top: 12px !important;
-            left: 12px !important;
-            padding: 10px 12px !important;
-            border-radius: 8px !important;
-            background: rgba(1,4,5,0.95) !important;
-            backdrop-filter: blur(4px) !important;
-            z-index: 300 !important;
-        }
-        .main {
-            padding: 12px 10px 20px !important;
-        }
+ @media (max-width: 768px) {
+    .main {
+        padding: 20px 16px 30px;
+    }
+    .main.shifted {
+        margin-left: 0;
+    }
+    .sidebar {
+        width: 260px;
+        left: -260px;
+    }
+    .sidebar.open {
+        left: 0;
+    }
+    .hamburger-btn {
+        display: block;
+    }
+    .cover h1 {
+        font-size: 36px;
+    }
+    .grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+    .form-box {
+        padding: 24px 20px;
     }
 
-    @media (max-width: 450px) {
-        .grid {
-            grid-template-columns: 1fr 1fr !important;
-            gap: 8px !important;
-        }
-        .cover h1 {
-            font-size: 28px !important;
-        }
-        .cover .sub {
-            font-size: 16px !important;
-        }
-        .page-title {
-            font-size: 18px !important;
-        }
-        .form-box input,
-        .form-box textarea,
-        .form-box select {
-            font-size: 16px !important;
-            padding: 10px 12px !important;
-        }
-        .card {
-            padding: 12px 8px !important;
-        }
-        .card .name {
-            font-size: 14px !important;
-        }
-        .card .role {
-            font-size: 11px !important;
-        }
-        .card .avatar {
-            width: 48px !important;
-            height: 48px !important;
-            font-size: 24px !important;
-        }
-        .flex-between .btn-primary {
-            font-size: 12px !important;
-            padding: 6px 14px !important;
-        }
-        .hamburger-btn {
-            top: 8px !important;
-            left: 8px !important;
-            padding: 8px 10px !important;
-        }
-        .hamburger-btn span {
-            width: 20px !important;
-            height: 2px !important;
-            margin: 3px 0 !important;
-        }
-        .sidebar {
-            width: 260px !important;
-            padding: 16px 12px !important;
-        }
-        .sidebar .logo {
-            font-size: 18px !important;
-        }
-        .sidebar .menu a {
-            font-size: 13px !important;
-            padding: 6px 12px !important;
-        }
-
-        /* Чат на самых маленьких */
-        .chat-container {
-            height: calc(100vh - 150px) !important;
-            min-height: 250px !important;
-        }
-        .chat-messages .msg-wrapper {
-            max-width: 96% !important;
-            gap: 4px !important;
-        }
-        .chat-messages .msg-content {
-            font-size: 13px !important;
-            padding: 6px 12px !important;
-            border-radius: 14px !important;
-        }
-        .chat-messages .msg-avatar {
-            width: 22px !important;
-            height: 22px !important;
-            font-size: 10px !important;
-        }
-        .chat-input-area input {
-            font-size: 16px !important;
-            padding: 8px 12px !important;
-        }
-        .chat-input-area .btn {
-            font-size: 12px !important;
-            padding: 8px 14px !important;
-        }
+    /* Чат на мобилках — уменьшенные отступы */
+    .chat-container {
+        height: calc(100vh - 150px) !important;
+        min-height: 250px !important;
+        padding: 0 8px 6px !important;
+        border-radius: 10px !important;
     }
+
+    .chat-messages {
+        padding: 8px 2px 4px !important;
+        gap: 2px !important;
+    }
+
+    .chat-messages .msg-wrapper {
+        max-width: 92% !important;
+        gap: 4px !important;
+    }
+
+    .chat-messages .msg-content {
+        font-size: 14px !important;
+        padding: 6px 12px !important;
+        border-radius: 14px !important;
+    }
+
+    .chat-messages .msg-avatar {
+        width: 24px !important;
+        height: 24px !important;
+        font-size: 10px !important;
+    }
+
+    .chat-messages .msg-actions {
+        opacity: 1 !important;
+    }
+    .chat-messages .msg-actions button {
+        font-size: 10px !important;
+        padding: 2px 5px !important;
+    }
+
+    .chat-input-area {
+        padding: 6px 8px 3px !important;
+        gap: 6px !important;
+        margin: 0 -8px !important;
+    }
+
+    .chat-input-area input {
+        font-size: 16px !important;
+        padding: 8px 12px !important;
+        border-radius: 20px !important;
+    }
+
+    .chat-input-area .btn {
+        font-size: 13px !important;
+        padding: 8px 16px !important;
+        border-radius: 20px !important;
+    }
+
+    .typing-indicator .dots {
+        padding: 6px 12px !important;
+        border-radius: 14px !important;
+    }
+    .typing-indicator .dots span {
+        width: 6px !important;
+        height: 6px !important;
+    }
+
+    .sidebar {
+        padding: 20px 14px !important;
+    }
+    .sidebar .logo {
+        font-size: 20px !important;
+        padding-bottom: 16px !important;
+        margin-bottom: 12px !important;
+    }
+    .sidebar .menu a {
+        padding: 8px 14px !important;
+        font-size: 14px !important;
+    }
+    .hamburger-btn {
+        top: 12px !important;
+        left: 12px !important;
+        padding: 10px 12px !important;
+        border-radius: 8px !important;
+        background: rgba(1,4,5,0.95) !important;
+        backdrop-filter: blur(4px) !important;
+        z-index: 300 !important;
+    }
+    .main {
+        padding: 12px 10px 20px !important;
+    }
+}
+   @media (max-width: 450px) {
+    .grid {
+        grid-template-columns: 1fr 1fr !important;
+        gap: 8px !important;
+    }
+    .cover h1 {
+        font-size: 28px !important;
+    }
+    .cover .sub {
+        font-size: 16px !important;
+    }
+    .page-title {
+        font-size: 18px !important;
+    }
+    .form-box input,
+    .form-box textarea,
+    .form-box select {
+        font-size: 16px !important;
+        padding: 10px 12px !important;
+    }
+    .card {
+        padding: 12px 8px !important;
+    }
+    .card .name {
+        font-size: 14px !important;
+    }
+    .card .role {
+        font-size: 11px !important;
+    }
+    .card .avatar {
+        width: 48px !important;
+        height: 48px !important;
+        font-size: 24px !important;
+    }
+    .flex-between .btn-primary {
+        font-size: 12px !important;
+        padding: 6px 14px !important;
+    }
+    .hamburger-btn {
+        top: 8px !important;
+        left: 8px !important;
+        padding: 8px 10px !important;
+    }
+    .hamburger-btn span {
+        width: 20px !important;
+        height: 2px !important;
+        margin: 3px 0 !important;
+    }
+    .sidebar {
+        width: 260px !important;
+        padding: 16px 12px !important;
+    }
+    .sidebar .logo {
+        font-size: 18px !important;
+    }
+    .sidebar .menu a {
+        font-size: 13px !important;
+        padding: 6px 12px !important;
+    }
+
+    /* Чат на самых маленьких */
+    .chat-container {
+        height: calc(100vh - 120px) !important;
+        min-height: 200px !important;
+        padding: 0 6px 4px !important;
+    }
+    .chat-messages {
+        padding: 6px 2px 3px !important;
+        gap: 1px !important;
+    }
+    .chat-messages .msg-wrapper {
+        max-width: 96% !important;
+        gap: 3px !important;
+    }
+    .chat-messages .msg-content {
+        font-size: 13px !important;
+        padding: 5px 10px !important;
+        border-radius: 12px !important;
+    }
+    .chat-messages .msg-avatar {
+        width: 20px !important;
+        height: 20px !important;
+        font-size: 8px !important;
+    }
+    .chat-input-area input {
+        font-size: 16px !important;
+        padding: 6px 10px !important;
+    }
+    .chat-input-area .btn {
+        font-size: 12px !important;
+        padding: 6px 12px !important;
+    }
+    .chat-input-area {
+        padding: 4px 6px 2px !important;
+        gap: 4px !important;
+    }
+}
 
     @supports (padding: max(0px)) {
         .chat-input-area {
@@ -3464,6 +3522,14 @@ HTML = r"""<!DOCTYPE html>
         </div>
         <div id="chatHistoryList" style="display:flex; flex-direction:column; gap:8px;">
             <!-- Список сохранённых чатов -->
+        </div>
+                <div style="margin-top:16px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.05); display:flex; gap:8px; flex-wrap:wrap;">
+            <button onclick="deleteAllChatsWithCharacter()" style="padding:8px 20px; background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3); border-radius:10px; color:#ff4444; cursor:pointer; font-size:13px;">
+                🗑️ Удалить все диалоги
+            </button>
+            <button onclick="closeChatHistory()" style="padding:8px 20px; background:transparent; border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#888; cursor:pointer; font-size:13px;">
+                Закрыть
+            </button>
         </div>
     </div>
 </div>
@@ -5742,23 +5808,31 @@ function showChatHistory() {
     const modal = document.getElementById('chatHistoryModal');
     const list = document.getElementById('chatHistoryList');
 
+    // Загружаем сохранённые чаты из localStorage
     const savedChats = JSON.parse(localStorage.getItem('chat_history_' + chatCharacterId) || '[]');
 
     if (!savedChats.length) {
-        list.innerHTML = '<div style="color:#666;text-align:center;padding:20px;">Нет сохранённых чатов</div>';
+        list.innerHTML = `
+            <div style="color:#666;text-align:center;padding:20px;">
+                📭 Нет сохранённых чатов
+            </div>
+        `;
     } else {
         list.innerHTML = savedChats.map(function(chat, index) {
             const date = new Date(chat.timestamp).toLocaleString();
             const preview = chat.messages.length > 0 ? chat.messages[0].content.slice(0, 50) + '...' : 'Пустой чат';
+            const msgCount = chat.messages.length;
+            
             return `
-                <div style="padding:12px 16px; background:rgba(255,255,255,0.03); border-radius:10px; border:1px solid rgba(255,255,255,0.05); display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <div style="font-size:14px; color:#aaa;">${date}</div>
-                        <div style="font-size:13px; color:#666;">"${preview}"</div>
+                <div style="padding:12px 16px; background:rgba(255,255,255,0.03); border-radius:10px; border:1px solid rgba(255,255,255,0.05); display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <div style="flex:1;">
+                        <div style="font-size:13px; color:#aaa;">${date}</div>
+                        <div style="font-size:13px; color:#666; margin-top:4px;">💬 ${msgCount} сообщений</div>
+                        <div style="font-size:12px; color:#555; margin-top:2px; font-style:italic;">"${preview}"</div>
                     </div>
-                    <div style="display:flex; gap:8px;">
-                        <button onclick="loadSavedChat(${chatCharacterId}, ${index})" style="padding:4px 12px; background:rgba(48,76,47,0.3); border:none; border-radius:8px; color:#fff; cursor:pointer;">Загрузить</button>
-                        <button onclick="deleteSavedChat(${chatCharacterId}, ${index})" style="padding:4px 12px; background:rgba(180,40,40,0.2); border:none; border-radius:8px; color:#ff4444; cursor:pointer;">Удалить</button>
+                    <div style="display:flex; gap:6px; flex-shrink:0;">
+                        <button onclick="loadSavedChat(${chatCharacterId}, ${index})" style="padding:4px 12px; background:rgba(48,76,47,0.3); border:none; border-radius:8px; color:#fff; cursor:pointer; font-size:12px;">📂 Загрузить</button>
+                        <button onclick="deleteSavedChat(${chatCharacterId}, ${index})" style="padding:4px 12px; background:rgba(180,40,40,0.2); border:none; border-radius:8px; color:#ff4444; cursor:pointer; font-size:12px;">🗑️ Удалить</button>
                     </div>
                 </div>
             `;
@@ -5844,6 +5918,36 @@ function deleteSavedChat(characterId, index) {
     saved.splice(index, 1);
     localStorage.setItem('chat_history_' + characterId, JSON.stringify(saved));
     showChatHistory();
+}
+
+// ============================================
+// УДАЛЕНИЕ ВСЕХ ДИАЛОГОВ С ПЕРСОНАЖЕМ
+// ============================================
+
+async function deleteAllChatsWithCharacter() {
+    if (!chatCharacterId) {
+        alert('Выберите персонажа');
+        return;
+    }
+
+    if (!confirm(`⚠️ Вы уверены, что хотите удалить ВСЕ диалоги с этим персонажем?\n\nЭто действие нельзя отменить!`)) {
+        return;
+    }
+
+    try {
+        // Удаляем из локального хранилища
+        localStorage.removeItem('chat_history_' + chatCharacterId);
+        
+        // Закрываем модальное окно
+        closeChatHistory();
+        
+        // Перезагружаем историю
+        showChatHistory();
+        
+        alert('✅ Все диалоги удалены!');
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
+    }
 }
 
 // ============================================
