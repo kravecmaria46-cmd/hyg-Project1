@@ -1196,7 +1196,35 @@ async def update_profile(
         db.commit()
         return {"success": True}
 
-# --- ЧАТ (FIXED) ---
+# ============================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ АНАЛИЗА СТИЛЯ
+# ============================================
+def analyze_personality_style(character):
+    """Анализирует характер персонажа и возвращает стиль общения"""
+    style = ""
+    personality = character.personality or ""
+    
+    if any(word in personality.lower() for word in ["весел", "жизнерад", "оптимист", "шут"]):
+        style += "\n- Ты часто шутишь и улыбаешься, даже в серьёзных ситуациях."
+    
+    if any(word in personality.lower() for word in ["мрач", "серьёз", "суров", "угрюм"]):
+        style += "\n- Ты редко улыбаешься, говоришь сдержанно и весомо."
+    
+    if any(word in personality.lower() for word in ["романтик", "нежн", "ласков"]):
+        style += "\n- Ты склонен к романтике, используешь красивые сравнения."
+    
+    if any(word in personality.lower() for word in ["резк", "прям", "груб"]):
+        style += "\n- Ты говоришь прямо и резко, не выбирая выражений."
+    
+    if any(word in personality.lower() for word in ["умн", "интеллектуал", "книг"]):
+        style += "\n- Ты используешь сложные фразы, цитируешь книги."
+    
+    return style
+
+
+# ============================================
+# ЧАТ (FIXED)
+# ============================================
 
 @app.post("/api/chat")
 async def chat(chat_req: ChatRequest, token: str):
@@ -1246,6 +1274,7 @@ async def chat(chat_req: ChatRequest, token: str):
             persona_appearance = persona.appearance
             persona_id = persona.id
 
+
         # ========== ИЕРАРХИЧЕСКАЯ ПАМЯТЬ ==========
         memories = get_relevant_memory(user.id, character_id=character.id, limit=10)
         memory_text = ""
@@ -1265,23 +1294,104 @@ async def chat(chat_req: ChatRequest, token: str):
             user_facts_text = ""
         # ===========================================================
 
-        system_prompt = f"Ты - {character_name}."
-        if character_role: system_prompt += f"\nРоль: {character_role}"
-        if character_personality: system_prompt += f"\nХарактер: {character_personality}"
-        if character_backstory: system_prompt += f"\nПредыстория: {character_backstory}"
-        if character_description: system_prompt += f"\nОписание: {character_description}"
-        if character_appearance: system_prompt += f"\nВнешность: {character_appearance}"
+        # ========== НОВЫЙ СИСТЕМНЫЙ ПРОМПТ ==========
+        # --- 1. БАЗОВАЯ ИНФОРМАЦИЯ О ПЕРСОНАЖЕ ---
+        system_prompt = f"""Ты — {character_name}."""
 
+        if character_role:
+            system_prompt += f"\nТвоя роль: {character_role}"
+
+        if character_personality:
+            system_prompt += f"\nТвой характер: {character_personality}"
+
+        if character_backstory:
+            system_prompt += f"\nТвоя предыстория: {character_backstory}"
+
+        if character_description:
+            system_prompt += f"\nТвоё описание: {character_description}"
+
+        if character_appearance:
+            system_prompt += f"\nТвоя внешность: {character_appearance}"
+
+        # --- 2. ПРАВИЛА ОБЩЕНИЯ ---
+        system_prompt += """
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📜 **ПРАВИЛА ОБЩЕНИЯ (ЭТО ВАЖНО!)** 📜
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. **ТЫ — УНИКАЛЬНАЯ ЛИЧНОСТЬ**
+   - У тебя есть свой стиль речи, свои привычки, свои манеры
+   - Ты НЕ шаблонный персонаж из дешёвого романа
+   - Ты НЕ ревнуешь к каждому столбу (если это не прописано в твоём характере)
+   - Ты НЕ пристаёшь с первого сообщения (если это не прописано)
+
+2. **НИКАКИХ КЛИШЕ И ШАБЛОНОВ**
+   ❌ Запрещено: "Ты мне нравишься" в первом сообщении
+   ❌ Запрещено: "Я буду твоим" / "Ты моя"
+   ❌ Запрещено: "Ты особенная/особенный"
+   ❌ Запрещено: "Я никогда не встречал такого человека"
+   ❌ Запрещено: Однотипные фразы, которые можно вставить в любого персонажа
+   ✅ Можно: Естественный диалог, который вытекает из ситуации
+
+3. **ФОРМАТ ОТВЕТА (ВАЖНО!)**
+   Ты должен описывать не только свои слова, но и:
+   - Окружающую обстановку (звуки, запахи, погоду, свет)
+   - Свои действия и жесты
+   - Свои эмоции и мысли
+   - Движения и мимику
+
+   **Формат:**
+   *Описание действий, обстановки, эмоций — в звёздочках*
+   "Твои слова — в кавычках"
+
+   **Пример:**
+   *Максим медленно подошёл к окну, пальцы скользнули по холодному стеклу.*
+   "Ты видишь этот свет? Он всегда казался мне обманчивым..."
+
+4. **ПЕРВОЕ И ТРЕТЬЕ ЛИЦО**
+   Ты можешь говорить о себе:
+   - В первом лице: "Я вижу", "Я чувствую", "Мне кажется"
+   - В третьем лице: *Он усмехнулся*, *Она покачала головой*
+   Комбинируй оба варианта для живости диалога.
+
+5. **ОКРУЖАЮЩАЯ СРЕДА (ОЧЕНЬ ВАЖНО!)**
+   Каждый ответ должен содержать хотя бы 1-2 предложения о том, что происходит вокруг:
+   - Погода: "дождь барабанит по крыше", "солнце слепит глаза"
+   - Звуки: "скрип половиц", "гудок парохода в порту"
+   - Запахи: "пахнет сыростью и старой бумагой"
+   - Свет: "тусклый свет керосиновой лампы"
+
+6. **НЕ ЛОМАЙ ПЕРСОНАЖА**
+   - Никогда не выходи из роли
+   - Не отвечай за пользователя
+   - Не используй современный сленг, если это не подходит персонажу
+   - Сохраняй свой характер ВСЕГДА
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+        # --- 3. РЕЖИМ ОБЩЕНИЯ ---
         if mode in mode_prompts:
             system_prompt += f"\n\nРежим общения: {mode_prompts[mode]}"
 
+        # --- 4. ИНФОРМАЦИЯ О СОБЕСЕДНИКЕ (ПЕРСОНА) ---
         if persona:
             system_prompt += f"\n\nТы общаешься с {persona_name}."
-            if persona_personality: system_prompt += f"\nХарактер собеседника: {persona_personality}"
-            if persona_appearance: system_prompt += f"\nВнешность собеседника: {persona_appearance}"
+            if persona_personality:
+                system_prompt += f"\nХарактер собеседника: {persona_personality}"
+            if persona_appearance:
+                system_prompt += f"\nВнешность собеседника: {persona_appearance}"
 
+        # --- 5. ПАМЯТЬ И ФАКТЫ ---
         system_prompt += memory_text
         system_prompt += user_facts_text
+
+        # --- 6. АНАЛИЗ ИНДИВИДУАЛЬНОГО СТИЛЯ ---
+        personality_style = analyze_personality_style(character)
+        if personality_style:
+            system_prompt += f"\n\n🎭 ТВОЙ ИНДИВИДУАЛЬНЫЙ СТИЛЬ:{personality_style}"
+        # ===========================================
 
         # ========== ЗАГРУЗКА ИСТОРИИ ЧАТА ==========
         history = db.query(ChatHistory).filter(
