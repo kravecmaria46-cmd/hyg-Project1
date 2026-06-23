@@ -3427,7 +3427,7 @@ HTML = r"""<!DOCTYPE html>
     <div id="page-chat" class="page">
         <div class="flex-between" style="margin-bottom:10px;">
             <div style="display:flex; align-items:center; gap:12px;">
-                <button onclick="showPage('chats')" style="background:transparent; border:none; color:#888; font-size:28px; cursor:pointer; transition:0.3s; padding:0 8px;"
+                <button onclick="goBack()" style="background:transparent; border:none; color:#888; font-size:28px; cursor:pointer; transition:0.3s; padding:0 8px;"
                         onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
                     ←
                 </button>
@@ -3707,7 +3707,14 @@ document.addEventListener('click', function(e) {
 // ============================================
 // НАВИГАЦИЯ
 // ============================================
+let pageHistory = ['home'];
+
 function showPage(id) {
+    // Если страница уже активна — ничего не делаем
+    if (document.getElementById('page-' + id)?.classList.contains('active')) {
+        return;
+    }
+
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     const target = document.getElementById('page-' + id);
     if (target) target.classList.add('active');
@@ -3742,6 +3749,7 @@ function showPage(id) {
         document.getElementById('mainContent').classList.remove('shifted');
     }
 
+    // ========== ЗАГРУЗКА ДАННЫХ ==========
     if (id === 'characters') loadCharacters();
     if (id === 'library') {
         libraryOffset = 0;
@@ -3756,11 +3764,12 @@ function showPage(id) {
     if (id === 'rooms') loadRooms();
     if (id === 'home') loadPopular();
     if (id === 'chats') loadChats();
-}
 
-function handleAuth() {
-    if (currentUser) showPage('profile');
-    else showPage('login');
+    // ========== УПРАВЛЕНИЕ ИСТОРИЕЙ ==========
+    if (pageHistory[pageHistory.length - 1] !== id) {
+        pageHistory.push(id);
+        history.pushState({ page: id }, '', '#' + id);
+    }
 }
 
 // ============================================
@@ -6134,6 +6143,7 @@ async function deleteAllChatsWithCharacter() {
     }
 }
 
+
 // ============================================
 // ЗАПУСК
 // ============================================
@@ -6141,6 +6151,48 @@ loadPopular();
 if (authToken) loadProfile();
 console.log('H.Y.G. Portal loaded');
 console.log('User:', currentUser || 'Not logged in');
+
+// ============================================
+// ОБРАБОТЧИК КНОПКИ "НАЗАД"
+// ============================================
+
+window.addEventListener('popstate', function(event) {
+    if (event.state && event.state.page) {
+        if (pageHistory.length > 1) pageHistory.pop();
+        showPage(event.state.page);
+    } else {
+        if (pageHistory.length > 1) {
+            pageHistory.pop();
+            showPage(pageHistory[pageHistory.length - 1] || 'home');
+        } else {
+            showPage('home');
+        }
+    }
+});
+
+function goBack() {
+    if (pageHistory.length > 1) {
+        pageHistory.pop();
+        showPage(pageHistory[pageHistory.length - 1] || 'home');
+    } else {
+        showPage('home');
+    }
+}
+
+window.addEventListener('load', function() {
+    if (window.location.hash) {
+        const page = window.location.hash.replace('#', '');
+        if (document.getElementById('page-' + page)) {
+            pageHistory = ['home', page];
+            showPage(page);
+            history.replaceState({ page: page }, '', window.location.hash);
+        }
+    } else {
+        pageHistory = ['home'];
+        showPage('home');
+        history.replaceState({ page: 'home' }, '', '#home');
+    }
+});
 </script>
 </body>
 </html>"""
