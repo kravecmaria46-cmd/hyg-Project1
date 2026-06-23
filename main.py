@@ -191,6 +191,15 @@ class Room(Base):
     lorebook_id = Column(Integer, nullable=True)
     members = Column(JSON, default=list)
 
+class UserMemory(Base):
+    __tablename__ = "user_memories"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    fact = Column(Text, nullable=False)
+    category = Column(String(50), default="general")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 # ============================================
 # СОЗДАНИЕ БАЗЫ
 # ============================================
@@ -1202,6 +1211,14 @@ async def chat(chat_req: ChatRequest, token: str):
             for m in memories:
                 memory_text += f"- {m.content}\n"
 
+                # ========== ЛИЧНАЯ ПАМЯТЬ (ФАКТЫ О ПОЛЬЗОВАТЕЛЕ) ==========
+        user_facts = load_user_memories(user.id)
+        if user_facts:
+            system_prompt += "\n\nФакты о собеседнике:\n"
+            for fact in user_facts:
+                system_prompt += f"- {fact}\n"
+        # ===========================================================
+
         system_prompt = f"Ты - {character_name}."
         if character_role: system_prompt += f"\nРоль: {character_role}"
         if character_personality: system_prompt += f"\nХарактер: {character_personality}"
@@ -1292,6 +1309,11 @@ async def chat(chat_req: ChatRequest, token: str):
         db.add(chat_entry)
         db.commit()
         db.refresh(chat_entry)
+
+                # ========== СОХРАНЯЕМ ФАКТЫ О ПОЛЬЗОВАТЕЛЕ ==========
+        if len(chat_req.message) > 20:
+            save_user_fact(user.id, chat_req.message[:200], "chat")
+        # ====================================================
 
         if len(chat_req.message) > 40:
             memory = Memory(
@@ -5456,6 +5478,34 @@ def summarize_chat_history(messages):
     except Exception as e:
         print(f"Ошибка суммаризации: {e}")
         return None
+
+# ============================================
+# ФУНКЦИИ ДЛЯ ЛИЧНОЙ ПАМЯТИ
+# ============================================
+
+def save_user_fact(user_id: int, fact: str, category: str = "general"):
+    """Сохраняет факт о пользователе в личную память."""
+    with SessionLocal() as db:
+        existing = db.query(UserMemory).filter(
+            UserMemory.user_id == user_id,
+            UserMemory.fact == fact
+        ).first()
+        if not existing:
+            memory = UserMemory(
+                user_id=user_id,
+                fact=fact,
+                category=category
+            )
+            db.add(memory)
+            db.commit()
+
+def load_user_memories(user_id: int, limit: int = 10):
+    """Загружает последние факты о пользователе."""
+    with SessionLocal() as db:
+        memories = db.query(UserMemory).filter(
+            UserMemory.user_id == user_id
+        ).order_by(UserMemory.created_at.desc()).limit(limit).all()
+        return [m.fact for m in memories]
         
 # ============================================
 # ЗАПУСК
