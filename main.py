@@ -5,14 +5,14 @@
 # ИМПОРТЫ
 # ============================================
 
-import os
+mport os
 import json
 import bcrypt
 import shutil
 import secrets
 import re
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict  # <-- Убедитесь, что есть Dict
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -199,6 +199,29 @@ class UserMemory(Base):
     category = Column(String(50), default="general")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class MemoryHierarchy(Base):
+    __tablename__ = "memory_hierarchy"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    content = Column(Text, nullable=False)
+    memory_type = Column(String(20), default="short")  # short, medium, long
+    importance = Column(Float, default=1.0)  # 0.1 - 2.0
+    category = Column(String(50), nullable=True)  # story, fact, relationship, world
+    character_id = Column(Integer, ForeignKey("characters.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_accessed = Column(DateTime, default=datetime.utcnow)
+    access_count = Column(Integer, default=0)
+    is_forgotten = Column(Boolean, default=False)
+    
+class MemoryConsolidation(Base):
+    __tablename__ = "memory_consolidation"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    summary = Column(Text, nullable=False)
+    source_memory_ids = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
 
 # ============================================
 # СОЗДАНИЕ БАЗЫ
@@ -1200,17 +1223,15 @@ async def chat(chat_req: ChatRequest, token: str):
             persona_appearance = persona.appearance
             persona_id = persona.id
 
-        memories = db.query(Memory).filter(
-            Memory.character_id == character.id,
-            Memory.user_id == user.id
-        ).order_by(Memory.importance.desc()).limit(5).all()
+       # Используем иерархическую память вместо старой
+memories = get_relevant_memory(user.id, character_id=character.id, limit=10)
 
-        memory_text = ""
-        if memories:
-            memory_text = "\n\nВот что ты помнишь:\n"
-            for m in memories:
-                memory_text += f"- {m.content}\n"
-
+# Формируем контекст из иерархической памяти
+memory_text = ""
+if memories:
+    memory_text = "\n\nВажные воспоминания:\n"
+    for m in memories:
+        memory_text += f"[{m['type'].upper()}] {m['content']}\n"
                 # ========== ЛИЧНАЯ ПАМЯТЬ (ФАКТЫ О ПОЛЬЗОВАТЕЛЕ) ==========
         user_facts = load_user_memories(user.id)
         if user_facts:
@@ -1798,6 +1819,7 @@ HTML = r"""<!DOCTYPE html>
         .hamburger-btn.active span:nth-child(3) {
             transform: rotate(-45deg) translate(4px, -4px);
         }
+        
         .sidebar {
     position: fixed;
     top: 0;
@@ -1814,12 +1836,8 @@ HTML = r"""<!DOCTYPE html>
     flex-direction: column;
 }
 .sidebar.open {
-    left: 0 !important;  /* <-- ДОБАВЬТЕ !important */
+    left: 0;
 }
-.sidebar.closed {           /* <-- ЭТО ВСТАВИТЬ СЮДА */
-    left: -280px !important;
-}
-
         .sidebar .logo {
             font-size: 24px;
             font-weight: 800;
@@ -5507,10 +5525,295 @@ def load_user_memories(user_id: int, limit: int = 10):
         ).order_by(UserMemory.created_at.desc()).limit(limit).all()
         return [m.fact for m in memories]
         
+        # ============================================
+# ФУНКЦИИ ДЛЯ ИЕРАРХИЧЕСКОЙ ПАМЯТИ
+# ============================================
+
+def save_hierarchical_memory(
+    user_id: int,
+    content: str,
+    memory_type: str = "short",
+    importance: float = 1.0,
+    category: str = "general",
+    character_id: int = None
+) -> int:
+    """Сохраняет память с иерархией"""
+    with SessionLocal() as db:
+        memory = MemoryHierarchy(
+            user_id=user_id,
+            content=content,
+            memory_type=memory_type,
+            importance=importance,
+            category=category,
+            character_id=character_id
+        )
+        db.add(memory)
+        db.commit()
+        db.refresh(memory)
+        
+        # Если важность высокая и это не долгосрочная память - консолидируем
+        if importance > 1.5 and memory_type != "long":
+            consolidate_memory(user_id, memory.id)
+        
+        return memory.id
+
+def get_relevant_memory(
+    user_id: int,
+    context: str = None,
+    character_id: int = None,
+    limit: int = 10
+):
+    """Получает релевантную память с учетом иерархии"""
+    with SessionLocal() as db:
+        # Сначала берем долгосрочную память (самая важная)
+        long_memory = db.query(MemoryHierarchy).filter(
+            MemoryHierarchy.user_id == user_id,
+            MemoryHierarchy.memory_type == "long",
+            MemoryHierarchy.is_forgotten == False
+        )
+        if character_id:
+            long_memory = long_memory.filter(MemoryHierarchy.character_id == character_id)
+        long_memory = long_memory.order_by(MemoryHierarchy.importance.desc()).limit(limit // 2).all()
+        
+        # Затем среднесрочную
+        medium_memory = db.query(MemoryHierarchy).filter(
+            MemoryHierarchy.user_id == user_id,
+            MemoryHierarchy.memory_type == "medium",
+            MemoryHierarchy.is_forgotten == False
+        )
+        if character_id:
+            medium_memory = medium_memory.filter(MemoryHierarchy.character_id == character_id)
+        medium_memory = medium_memory.order_by(
+            MemoryHierarchy.last_accessed.desc(),
+            MemoryHierarchy.importance.desc()
+        ).limit(limit // 3).all()
+        
+        # Затем краткосрочную (самая свежая)
+        short_memory = db.query(MemoryHierarchy).filter(
+            MemoryHierarchy.user_id == user_id,
+            MemoryHierarchy.memory_type == "short",
+            MemoryHierarchy.is_forgotten == False
+        )
+        if character_id:
+            short_memory = short_memory.filter(MemoryHierarchy.character_id == character_id)
+        short_memory = short_memory.order_by(
+            MemoryHierarchy.last_accessed.desc()
+        ).limit(limit - len(long_memory) - len(medium_memory)).all()
+        
+        # Объединяем
+        all_memory = long_memory + medium_memory + short_memory
+        
+        # Обновляем время доступа
+        for mem in all_memory:
+            mem.last_accessed = datetime.utcnow()
+            mem.access_count += 1
+        db.commit()
+        
+        return [{
+            "id": m.id,
+            "content": m.content,
+            "type": m.memory_type,
+            "importance": m.importance,
+            "category": m.category
+        } for m in all_memory]
+
+def consolidate_memory(user_id: int, memory_id: int):
+    """Консолидирует важную память в долгосрочную"""
+    with SessionLocal() as db:
+        memory = db.query(MemoryHierarchy).filter(
+            MemoryHierarchy.id == memory_id,
+            MemoryHierarchy.user_id == user_id
+        ).first()
+        
+        if not memory or memory.memory_type == "long":
+            return
+        
+        # Проверяем, есть ли похожие воспоминания
+        similar = db.query(MemoryHierarchy).filter(
+            MemoryHierarchy.user_id == user_id,
+            MemoryHierarchy.memory_type == "long",
+            MemoryHierarchy.content.ilike(f"%{memory.content[:50]}%")
+        ).first()
+        
+        if similar:
+            # Обновляем существующее
+            similar.content = memory.content + "\n\n[Обновлено] " + similar.content
+            similar.importance = max(similar.importance, memory.importance)
+            db.commit()
+            # Удаляем исходное
+            db.delete(memory)
+            db.commit()
+        else:
+            # Превращаем в долгосрочное
+            memory.memory_type = "long"
+            memory.importance = min(memory.importance * 1.5, 2.0)
+            db.commit()
+
+def forget_memory(user_id: int, days_threshold: int = 30):
+    """Механизм забывания - удаляет неиспользуемую память"""
+    with SessionLocal() as db:
+        cutoff = datetime.utcnow() - timedelta(days=days_threshold)
+        
+        # Короткая память забывается быстрее
+        short_memory = db.query(MemoryHierarchy).filter(
+            MemoryHierarchy.user_id == user_id,
+            MemoryHierarchy.memory_type == "short",
+            MemoryHierarchy.last_accessed < cutoff,
+            MemoryHierarchy.importance < 0.5
+        ).delete()
+        
+        # Средняя память - реже
+        medium_cutoff = datetime.utcnow() - timedelta(days=days_threshold * 2)
+        medium_memory = db.query(MemoryHierarchy).filter(
+            MemoryHierarchy.user_id == user_id,
+            MemoryHierarchy.memory_type == "medium",
+            MemoryHierarchy.last_accessed < medium_cutoff,
+            MemoryHierarchy.importance < 0.3
+        ).update({"is_forgotten": True})
+        
+        db.commit()
+        
+        return short_memory + medium_memory
+
+def summarize_memory_batch(user_id: int):
+    """Пакетная суммаризация старых воспоминаний"""
+    with SessionLocal() as db:
+        # Берем старые короткие воспоминания (больше 7 дней)
+        cutoff = datetime.utcnow() - timedelta(days=7)
+        old_memories = db.query(MemoryHierarchy).filter(
+            MemoryHierarchy.user_id == user_id,
+            MemoryHierarchy.memory_type.in_(["short", "medium"]),
+            MemoryHierarchy.created_at < cutoff,
+            MemoryHierarchy.is_forgotten == False
+        ).order_by(MemoryHierarchy.created_at).limit(20).all()
+        
+        if len(old_memories) < 5:
+            return None
+        
+        # Группируем по категориям
+        categories = {}
+        for mem in old_memories:
+            if mem.category not in categories:
+                categories[mem.category] = []
+            categories[mem.category].append(mem)
+        
+        summaries = []
+        for category, memories in categories.items():
+            if len(memories) < 3:
+                continue
+            
+            memory_text = "\n".join([f"- {m.content}" for m in memories])
+            
+            try:
+                response = openai.chat.completions.create(
+                    model="deepseek/deepseek-v4-flash",
+                    messages=[
+                        {"role": "system", "content": f"Сожми эти воспоминания категории '{category}' в 2-3 предложения, сохраняя суть:"},
+                        {"role": "user", "content": memory_text}
+                    ],
+                    max_tokens=150,
+                    temperature=0.5
+                )
+                summary = response.choices[0].message.content
+                
+                # Сохраняем консолидированную память
+                consolidated = MemoryConsolidation(
+                    user_id=user_id,
+                    summary=summary,
+                    source_memory_ids=[m.id for m in memories],
+                    is_active=True
+                )
+                db.add(consolidated)
+                
+                # Помечаем исходные как забытые
+                for mem in memories:
+                    mem.is_forgotten = True
+                
+                db.commit()
+                summaries.append(summary)
+                
+            except Exception as e:
+                print(f"Ошибка суммаризации: {e}")
+        
+        return summaries
+        
 # ============================================
 # ЗАПУСК
 # ============================================
+# ============================================
+# API ЭНДПОИНТЫ ДЛЯ ИЕРАРХИЧЕСКОЙ ПАМЯТИ
+# ============================================
 
+@app.get("/api/memory/hierarchy")
+async def get_hierarchical_memory(
+    token: str,
+    character_id: Optional[int] = None,
+    limit: int = 10
+):
+    """Получить иерархическую память"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    memories = get_relevant_memory(user.id, character_id=character_id, limit=limit)
+    return memories
+
+@app.post("/api/memory/hierarchy")
+async def save_hierarchical_memory_endpoint(
+    token: str,
+    content: str,
+    memory_type: str = "short",
+    importance: float = 1.0,
+    category: str = "general",
+    character_id: Optional[int] = None
+):
+    """Сохранить иерархическую память"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    memory_id = save_hierarchical_memory(
+        user_id=user.id,
+        content=content,
+        memory_type=memory_type,
+        importance=importance,
+        category=category,
+        character_id=character_id
+    )
+    
+    return {"success": True, "memory_id": memory_id}
+
+@app.post("/api/memory/forget")
+async def forget_old_memories(token: str, days: int = 30):
+    """Забыть старые воспоминания"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    forgotten_count = forget_memory(user.id, days)
+    return {"success": True, "forgotten_count": forgotten_count}
+
+@app.post("/api/memory/consolidate")
+async def consolidate_memories(token: str):
+    """Сконсолидировать воспоминания"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    summaries = summarize_memory_batch(user.id)
+    return {"success": True, "summaries": summaries or []}
+    
+    # ============================================
+# СОЗДАНИЕ НОВЫХ ТАБЛИЦ
+# ============================================
+
+try:
+    # Создаем новые таблицы для иерархической памяти
+    Base.metadata.create_all(bind=engine)
+    print("✅ Таблицы иерархической памяти созданы")
+except Exception as e:
+    print(f"❌ Ошибка создания таблиц: {e}")
+    
 @app.get("/")
 @app.get("/{path:path}")
 async def serve_frontend():
