@@ -205,10 +205,11 @@ class MemoryHierarchy(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     content = Column(Text, nullable=False)
-    memory_type = Column(String(20), default="short")  # short, medium, long
-    importance = Column(Float, default=1.0)  # 0.1 - 2.0
-    category = Column(String(50), nullable=True)  # story, fact, relationship, world
+    memory_type = Column(String(20), default="short")
+    importance = Column(Float, default=1.0)
+    category = Column(String(50), nullable=True)
     character_id = Column(Integer, ForeignKey("characters.id"), nullable=True)
+    world_id = Column(Integer, ForeignKey("worlds.id"), nullable=True)  # <-- ЭТУ СТРОКУ ДОБАВИТЬ!
     created_at = Column(DateTime, default=datetime.utcnow)
     last_accessed = Column(DateTime, default=datetime.utcnow)
     access_count = Column(Integer, default=0)
@@ -224,14 +225,36 @@ class MemoryConsolidation(Base):
     is_active = Column(Boolean, default=True)
 
 # ============================================
-# СОЗДАНИЕ БАЗЫ
+# СОЗДАНИЕ БАЗЫ (С МИГРАЦИЕЙ)
 # ============================================
 
 try:
+    with engine.connect() as conn:
+        # Проверяем тип БД
+        if DATABASE_URL.startswith("sqlite"):
+            # Для SQLite - просто пытаемся добавить колонку
+            try:
+                conn.execute("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER")
+                conn.commit()
+                print("✅ Колонка world_id добавлена в SQLite")
+            except Exception as e:
+                # Колонка уже существует или другая ошибка
+                print(f"ℹ️ Колонка уже существует или ошибка: {e}")
+        else:
+            # Для PostgreSQL/MySQL с внешним ключом
+            try:
+                conn.execute("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER REFERENCES worlds(id)")
+                conn.commit()
+                print("✅ Колонка world_id добавлена")
+            except Exception as e:
+                print(f"ℹ️ Колонка уже существует или ошибка: {e}")
+    
+    # Создаем остальные таблицы (если их нет)
     Base.metadata.create_all(bind=engine)
-    print("✅ База данных создана/подключена")
+    print("✅ База данных подключена")
+    
 except Exception as e:
-    print(f"❌ Ошибка создания таблиц: {e}")
+    print(f"❌ Ошибка: {e}")
 
 # ============================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СЕССИЙ (FIXED)
