@@ -608,7 +608,7 @@ async def generate_character(req: GenerateRequest, token: str):
                 {"role": "user", "content": f"Создай персонажа по запросу: {req.prompt}"}
             ],
             temperature=0.9,
-            max_tokens=1500
+            max_tokens=4096
         )
         result = response.choices[0].message.content
         
@@ -1236,6 +1236,24 @@ async def chat(chat_req: ChatRequest, token: str):
             messages.append({"role": "user", "content": h.user_message})
             messages.append({"role": "assistant", "content": h.bot_response})
         messages.append({"role": "user", "content": chat_req.message})
+        # ========== СЮДА ВСТАВЛЯЕМ НОВЫЙ КОД ==========
+        # Проверяем, не пора ли сделать суммаризацию
+        if len(messages) > 50:  # Если в истории больше 50 сообщений
+            summary = summarize_chat_history(messages)  # Сжимаем
+            if summary:
+                # Сохраняем сжатый пересказ в базу (как "сюжетную память")
+                with SessionLocal() as db_summary:
+                    memory = Memory(
+                        content=f"Сюжетная память: {summary}",
+                        memory_type="story",
+                        importance=2.0,
+                        is_auto=True,
+                        user_id=user.id,
+                        character_id=character.id,
+                        persona_id=persona_id
+                    )
+                    db_summary.add(memory)
+                    db_summary.commit()
 
         api_keys = user.api_keys or {}
         api_key = api_keys.get("polza") or POLZA_API_KEY
@@ -5407,6 +5425,38 @@ console.log('User:', currentUser || 'Not logged in');
 </body>
 </html>"""
 
+# ============================================
+# ФУНКЦИЯ ДЛЯ АВТО-СУММАРИЗАЦИИ
+# ============================================
+
+def summarize_chat_history(messages):
+    """Сжимает историю чата в краткий пересказ."""
+    if len(messages) < 50:
+        return None
+
+    # Берем последние 50 сообщений (исключаем system)
+    chat_messages = [m for m in messages if m['role'] != 'system']
+    recent = chat_messages[-50:]
+
+    # Формируем текст для сжатия
+    history_text = "\n".join([f"{m['role']}: {m['content']}" for m in recent])
+
+    try:
+        # Просим AI сжать
+        response = openai.chat.completions.create(
+            model="deepseek/deepseek-v4-flash",
+            messages=[
+                {"role": "system", "content": "Ты — помощник, который сжимает историю диалога в 3-5 предложений, сохраняя суть, ключевые события и эмоциональный фон."},
+                {"role": "user", "content": f"Сожми эту историю:\n\n{history_text}"}
+            ],
+            max_tokens=200,
+            temperature=0.5
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Ошибка суммаризации: {e}")
+        return None
+        
 # ============================================
 # ЗАПУСК
 # ============================================
