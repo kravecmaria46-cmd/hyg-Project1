@@ -1354,6 +1354,17 @@ async def chat(chat_req: ChatRequest, token: str):
             )
             db.add(memory)
             db.commit()
+            
+                    # ========== СОХРАНЯЕМ В ИЕРАРХИЧЕСКУЮ ПАМЯТЬ ==========
+        save_hierarchical_memory(
+            user_id=user.id,
+            content=chat_req.message,
+            memory_type="short",
+            importance=1.0,
+            category="fact",
+            character_id=character.id
+        )
+        # =======================================================
 
         return {"response": bot_response, "character_id": character_id, "character_name": character_name}
 
