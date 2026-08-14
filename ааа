@@ -478,7 +478,15 @@ class LoreCreate(BaseModel):
     character_id: Optional[int] = None
     world_id: Optional[int] = None
     room_id: Optional[int] = None
-
+    # ===== ДОБАВЬТЕ =====
+    lore_type: Optional[str] = "general"
+    importance: Optional[int] = 1
+    related_entities: Optional[List[int]] = []
+    timeline_date: Optional[str] = None
+    location: Optional[str] = None
+    is_secret: Optional[bool] = False
+    subcategory: Optional[str] = None
+    
 class RoomCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -1113,9 +1121,21 @@ async def get_lore(token: str, search: Optional[str] = None):
             )
         lore = query.order_by(LoreEntry.created_at.desc()).all()
         return [{
-            "id": l.id, "title": l.title, "content": l.content,
-            "category": l.category, "tags": l.tags,
-            "character_id": l.character_id, "world_id": l.world_id, "room_id": l.room_id
+            "id": l.id,
+            "title": l.title,
+            "content": l.content,
+            "category": l.category,
+            "tags": l.tags,
+            "character_id": l.character_id,
+            "world_id": l.world_id,
+            "room_id": l.room_id,
+            "lore_type": l.lore_type,
+            "importance": l.importance,
+            "related_entities": l.related_entities,
+            "timeline_date": l.timeline_date,
+            "location": l.location,
+            "is_secret": l.is_secret,
+            "subcategory": l.subcategory
         } for l in lore]
 
 @app.post("/api/lore")
@@ -1163,7 +1183,7 @@ async def delete_lore(lore_id: int, token: str):
         db.commit()
         return {"success": True}
 
-        # ============================================
+# ============================================
 # РАСШИРЕННЫЙ ЛОРБУК
 # ============================================
 
@@ -1217,7 +1237,6 @@ async def get_lore_timeline(world_id: int, token: str):
             "content": e.content,
             "importance": e.importance
         } for e in events]
-
 # --- КОМНАТЫ ---
 
 # --- КОМНАТЫ ---
