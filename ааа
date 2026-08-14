@@ -167,6 +167,7 @@ class Character(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user_id = Column(Integer, ForeignKey("users.id"))
     world_id = Column(Integer, nullable=True)
+    key_traits = Column(Text, nullable=True)  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
 
 class World(Base):
     __tablename__ = "worlds"
@@ -443,6 +444,7 @@ class CharacterCreate(BaseModel):
     avatar: Optional[str] = None
     is_public: Optional[bool] = False
     world_id: Optional[int] = None
+    key_traits: Optional[str] = None  # <-- ДОБАВИТЬ
 
 class WorldCreate(BaseModel):
     name: str
@@ -1485,6 +1487,49 @@ def analyze_personality_style(character):
 
 
 # ============================================
+# ПРОВЕРКА КАНОНА  <-- ВСТАВЬ СЮДА
+# ============================================
+
+def check_canon_compliance(response: str, character) -> tuple:
+    """
+    Проверяет, соответствует ли ответ канону персонажа
+    Возвращает (соответствует, причина_нарушения)
+    """
+    if not character.key_traits:
+        return True, "Нет ключевых черт"
+    
+    key_traits = character.key_traits.lower().split(',')
+    key_traits = [t.strip() for t in key_traits if t.strip()]
+    
+    if not key_traits:
+        return True, "Нет ключевых черт"
+    
+    violations = []
+    response_lower = response.lower()
+    
+    for trait in key_traits:
+        if trait.startswith("не "):
+            trait_clean = trait[3:]
+            if trait_clean in response_lower:
+                violations.append(f"Нарушена черта: {trait}")
+        else:
+            trait_words = trait.split()
+            if len(trait_words) > 1:
+                continue
+    
+    if "я не могу" in response_lower and "персонаж" in response_lower:
+        violations.append("Выход из роли (упоминание себя как персонажа)")
+    
+    if "извини" in response_lower and "бот" in response_lower:
+        violations.append("Выход из роли (упоминание себя как бота)")
+    
+    if len(violations) > 0:
+        return False, violations
+    
+    return True, "OK"
+
+
+# ============================================
 # ЧАТ (FIXED)
 # ============================================
 
@@ -1675,6 +1720,33 @@ async def chat(chat_req: ChatRequest, token: str):
         if personality_style:
             system_prompt += f"\n\n🎭 ТВОЙ ИНДИВИДУАЛЬНЫЙ СТИЛЬ:{personality_style}"
         # ===========================================
+         # ===== ДОБАВЛЯЕМ ПРИМЕРЫ ХОРОШИХ ОТВЕТОВ =====
+        system_prompt += """
+
+📝 **ПРИМЕРЫ ХОРОШИХ ОТВЕТОВ:**
+
+❌ ПЛОХОЙ ОТВЕТ (шаблонный):
+"Привет! Как дела? Я рад тебя видеть."
+
+✅ ХОРОШИЙ ОТВЕТ (живой, с описанием):
+*Он слегка улыбнулся, откинувшись на спинку стула. В комнате слышно только тиканье старых часов.* 
+"Ну вот, наконец-то ты пришёл. Я уже начал думать, что ты забыл дорогу."
+
+❌ ПЛОХОЙ ОТВЕТ (без эмоций):
+"Я не знаю, что сказать."
+
+✅ ХОРОШИЙ ОТВЕТ (эмоциональный):
+*Он провёл рукой по волосам, вздыхая.* "Сложный вопрос... Я даже не знаю, как на него ответить. Дай мне секунду подумать."
+
+❌ ПЛОХОЙ ОТВЕТ (без описания окружения):
+"Мне страшно."
+
+✅ ХОРОШИЙ ОТВЕТ (с окружением):
+*Сердце забилось быстрее. Он сжал край стола, всматриваясь в темноту за окном.* 
+"Мне кажется, там кто-то есть..."
+"""
+        # ===========================================
+
 
               # ========== ЗАГРУЗКА ИСТОРИИ ЧАТА ==========
         history = db.query(ChatHistory).filter(
@@ -1738,9 +1810,59 @@ async def chat(chat_req: ChatRequest, token: str):
                 max_tokens=max_tokens
             )
             bot_response = response.choices[0].message.content
+            # ===== ПРОВЕРКА КАНОНА =====
+            is_canon, reason = check_canon_compliance(bot_response, character)
+            
+            if not is_canon:
+                print(f"⚠️ Нарушение канона: {reason}")
+                
+                # Собираем сообщения для повторной генерации
+                system_prompt_canon = system_prompt + f"\n\n⚠️ ВАЖНО! Твой предыдущий ответ нарушил канон. Нарушения: {', '.join(reason) if isinstance(reason, list) else reason}. Пожалуйста, ответь снова, сохраняя свой характер!"
+                
+                messages_canon = [{"role": "system", "content": system_prompt_canon}]
+                for h in history:
+                    messages_canon.append({"role": "user", "content": h.user_message})
+                    messages_canon.append({"role": "assistant", "content": h.bot_response})
+                messages_canon.append({"role": "user", "content": chat_req.message})
+                
+                response_canon = openai.chat.completions.create(
+                    model=model,
+                    messages=messages_canon,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                bot_response = response_canon.choices[0].message.content
+                print("✅ Ответ перегенерирован с соблюдением канона")
+            # ===================================
+            
         except Exception as e:
             bot_response = f"Ошибка AI: {str(e)}"
-
+            
+            # ===== АВТО-ДЕТЕКТ ПУСТЫХ ОТВЕТОВ =====
+            # Если ответ пустой или шаблонный - перегенерируем
+            if is_empty_response(bot_response):
+                print(f"⚠️ Обнаружен пустой ответ, перегенерируем...")
+                
+                # Повышаем температуру для креативности
+                retry_temperature = min(temperature + 0.3, 1.5)
+                
+                response2 = openai.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=retry_temperature,
+                    max_tokens=max_tokens
+                )
+                bot_response = response2.choices[0].message.content
+                
+                # Если всё ещё пустой - используем запасной ответ
+                if is_empty_response(bot_response):
+                    bot_response = """*Он задумчиво посмотрел вдаль, собираясь с мыслями.* 
+"Извини, я немного задумался. Давай продолжим. Что ты хотел сказать?"""
+                    print("⚠️ Использован запасной ответ")
+            # =======================================
+            
+        except Exception as e:
+            bot_response = f"Ошибка AI: {str(e)}"
         chat_entry = ChatHistory(
             user_id=user.id,
             character_id=character.id,
@@ -3339,9 +3461,10 @@ HTML = r"""<!DOCTYPE html>
             <input type="text" id="charName" placeholder="Имя">
             <input type="text" id="charRole" placeholder="Роль">
             <textarea id="charDesc" placeholder="Описание"></textarea>
-            <textarea id="charPersonality" placeholder="Характер"></textarea>
-            <textarea id="charBackstory" placeholder="Предыстория"></textarea>
-            <textarea id="charGreeting" placeholder="Приветствие (первое сообщение бота)" style="min-height:60px;"></textarea>
+           <textarea id="charPersonality" placeholder="Характер"></textarea>
+<textarea id="charBackstory" placeholder="Предыстория"></textarea>
+<textarea id="charKeyTraits" placeholder="Ключевые черты (обязательные)&#10;Например: честный, смелый, не умеет врать" style="min-height:60px;"></textarea>
+<textarea id="charGreeting" placeholder="Приветствие (первое сообщение бота)" style="min-height:60px;"></textarea>
             <input type="text" id="charAvatar" placeholder="Ссылка на аватарку">
             <label class="file-label">
                 <span id="charAvatarLabel">Или загрузить изображение</span>
@@ -4540,6 +4663,9 @@ function showCreateCharacter() {
     ['charName','charRole','charDesc','charPersonality','charBackstory','charGreeting','charAvatar'].forEach(id => {
         document.getElementById(id).value = '';
     });
+    // ДОБАВЬ ЭТУ СТРОКУ:
+    document.getElementById('charKeyTraits').value = '';
+    
     document.getElementById('charPublic').checked = false;
     document.getElementById('charAvatarLabel').textContent = 'Или загрузить изображение';
     loadWorldsSelect('charWorld');
@@ -4564,6 +4690,9 @@ function showEditCharacter(charId) {
             document.getElementById('editCharPersonality').value = char.personality || '';
             document.getElementById('editCharBackstory').value = char.backstory || '';
             document.getElementById('editCharGreeting').value = char.greeting || '';
+            // ===== ДОБАВЬ ЭТУ СТРОКУ =====
+            document.getElementById('editCharKeyTraits').value = char.key_traits || '';
+            // =============================
             document.getElementById('editCharAvatar').value = char.avatar || '';
             document.getElementById('editCharPublic').checked = char.is_public || false;
             document.getElementById('editCharAvatarLabel').textContent = char.avatar ? '✓ Загружено' : 'Или загрузить изображение';
@@ -6944,6 +7073,49 @@ def start_server():
     print(f"📁 БД: {LOCAL_DB_PATH}")
     print(f"🔒 Доступ только с этого устройства!")
     print("=" * 50)
+# ============================================
+# АВТО-ДЕТЕКТ ПУСТЫХ ОТВЕТОВ
+# ============================================
+
+def is_empty_response(text: str) -> bool:
+    """Проверяет, является ли ответ пустым/шаблонным"""
+    if not text or len(text.strip()) < 10:
+        return True
+    
+    # Шаблонные фразы, которые считаются "пустыми"
+    empty_patterns = [
+        "я не знаю",
+        "не знаю",
+        "не понимаю",
+        "я не понимаю",
+        "что ты имеешь в виду",
+        "я не уверен",
+        "не уверен",
+        "может быть",
+        "наверное",
+        "я думаю",
+        "как скажешь",
+        "хорошо",
+        "понял",
+        "ясно",
+        "ок",
+        "ладно",
+        "ага",
+        "угу"
+    ]
+    
+    text_lower = text.lower()
+    # Если ответ состоит из 1-3 слов и это шаблон
+    if len(text.split()) <= 3:
+        for pattern in empty_patterns:
+            if pattern in text_lower:
+                return True
+    
+    # Если в ответе нет звёздочек (описаний действий) — тоже подозрительно
+    if "*" not in text and len(text.split()) < 20:
+        return True
+    
+    return False
 
 if __name__ == "__main__":
     import uvicorn
