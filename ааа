@@ -4731,16 +4731,17 @@ async function updateCharacter() {
     if (!authToken) { alert('Войдите чтобы редактировать персонажа'); return; }
     if (!editingCharacterId) { alert('Персонаж не выбран'); return; }
     const data = {
-        name: document.getElementById('editCharName').value.trim(),
-        role: document.getElementById('editCharRole').value.trim() || null,
-        description: document.getElementById('editCharDesc').value.trim() || null,
-        personality: document.getElementById('editCharPersonality').value.trim() || null,
-        backstory: document.getElementById('editCharBackstory').value.trim() || null,
-        greeting: document.getElementById('editCharGreeting').value.trim() || null,
-        avatar: document.getElementById('editCharAvatar').value.trim() || null,
-        is_public: document.getElementById('editCharPublic').checked,
-        world_id: parseInt(document.getElementById('editCharWorld').value) || null
-    };
+    name: document.getElementById('editCharName').value.trim(),
+    role: document.getElementById('editCharRole').value.trim() || null,
+    description: document.getElementById('editCharDesc').value.trim() || null,
+    personality: document.getElementById('editCharPersonality').value.trim() || null,
+    backstory: document.getElementById('editCharBackstory').value.trim() || null,
+    greeting: document.getElementById('editCharGreeting').value.trim() || null,
+    key_traits: document.getElementById('editCharKeyTraits').value.trim() || null,  // <-- ДОБАВИТЬ
+    avatar: document.getElementById('editCharAvatar').value.trim() || null,
+    is_public: document.getElementById('editCharPublic').checked,
+    world_id: parseInt(document.getElementById('editCharWorld').value) || null
+};
     if (!data.name) { alert('Введите имя'); return; }
     try {
         const r = await fetch(getAuthUrl('/api/characters/' + editingCharacterId), {
@@ -4763,16 +4764,17 @@ async function updateCharacter() {
 async function saveCharacter() {
     if (!authToken) { alert('Войдите чтобы создать персонажа'); return; }
     const data = {
-        name: document.getElementById('charName').value.trim(),
-        role: document.getElementById('charRole').value.trim() || null,
-        description: document.getElementById('charDesc').value.trim() || null,
-        personality: document.getElementById('charPersonality').value.trim() || null,
-        backstory: document.getElementById('charBackstory').value.trim() || null,
-        greeting: document.getElementById('charGreeting').value.trim() || null,
-        avatar: document.getElementById('charAvatar').value.trim() || null,
-        is_public: document.getElementById('charPublic').checked,
-        world_id: parseInt(document.getElementById('charWorld').value) || null
-    };
+    name: document.getElementById('charName').value.trim(),
+    role: document.getElementById('charRole').value.trim() || null,
+    description: document.getElementById('charDesc').value.trim() || null,
+    personality: document.getElementById('charPersonality').value.trim() || null,
+    backstory: document.getElementById('charBackstory').value.trim() || null,
+    greeting: document.getElementById('charGreeting').value.trim() || null,
+    key_traits: document.getElementById('charKeyTraits').value.trim() || null,  // <-- ДОБАВИТЬ
+    avatar: document.getElementById('charAvatar').value.trim() || null,
+    is_public: document.getElementById('charPublic').checked,
+    world_id: parseInt(document.getElementById('charWorld').value) || null
+};
     if (!data.name) { alert('Введите имя'); return; }
     try {
         const r = await fetch(getAuthUrl('/api/characters'), {
