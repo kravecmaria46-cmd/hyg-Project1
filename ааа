@@ -486,7 +486,7 @@ class LoreCreate(BaseModel):
     location: Optional[str] = None
     is_secret: Optional[bool] = False
     subcategory: Optional[str] = None
-    
+
 class RoomCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -3585,54 +3585,167 @@ HTML = r"""<!DOCTYPE html>
     </div>
 
     <!-- ===== СОЗДАНИЕ ЛОРА ===== -->
-    <div id="page-lore-create" class="page">
-        <div class="flex-between">
-            <div><div class="page-title">Создать запись</div><div class="page-desc">Добавь новую информацию</div></div>
-            <button class="btn-primary" onclick="showPage('lore')">Назад</button>
-        </div>
-        <div class="form-box">
-            <input type="text" id="loreTitle" placeholder="Заголовок">
-            <input type="text" id="loreCategory" placeholder="Категория">
-            <textarea id="loreContent" placeholder="Содержание" style="min-height:120px;"></textarea>
-            <input type="text" id="loreTags" placeholder="Теги (через запятую)">
-            <select class="select-styled" id="loreCharacter" style="margin-top:8px;">
-                <option value="">Без персонажа</option>
-            </select>
-            <select class="select-styled" id="loreWorld">
-                <option value="">Без мира</option>
-            </select>
-            <select class="select-styled" id="loreRoom">
-                <option value="">Без комнаты</option>
-            </select>
-            <button class="btn" onclick="saveLore()">Сохранить</button>
-        </div>
+<div id="page-lore-create" class="page">
+    <div class="flex-between">
+        <div><div class="page-title">Создать запись</div><div class="page-desc">Добавь новую информацию</div></div>
+        <button class="btn-primary" onclick="showPage('lore')">Назад</button>
     </div>
+    <div class="form-box">
+        <input type="text" id="loreTitle" placeholder="Заголовок">
+        
+        <!-- ТИП ЗАПИСИ (НОВОЕ) -->
+        <select id="loreType" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="world">🌍 Мир</option>
+            <option value="location">📍 Локация</option>
+            <option value="character">👤 Персонаж</option>
+            <option value="event">⚡ Событие</option>
+            <option value="item">📦 Предмет</option>
+            <option value="faction">🏴 Фракция</option>
+            <option value="timeline">📅 Хронология</option>
+            <option value="history">📜 История</option>
+            <option value="magic">🔮 Магия</option>
+            <option value="religion">⛪ Религия</option>
+            <option value="secret">🔒 Секрет</option>
+            <option value="general" selected>📝 Общее</option>
+        </select>
 
-    <!-- ===== РЕДАКТИРОВАНИЕ ЛОРА ===== -->
-    <div id="page-lore-edit" class="page">
-        <div class="flex-between">
-            <div><div class="page-title">Редактировать запись</div><div class="page-desc">Измени информацию</div></div>
-            <button class="btn-primary" onclick="showPage('lore')">Назад</button>
-        </div>
-        <div class="form-box">
-            <input type="text" id="editLoreTitle" placeholder="Заголовок">
-            <input type="text" id="editLoreCategory" placeholder="Категория">
-            <textarea id="editLoreContent" placeholder="Содержание" style="min-height:120px;"></textarea>
-            <input type="text" id="editLoreTags" placeholder="Теги (через запятую)">
-            <select class="select-styled" id="editLoreCharacter" style="margin-top:8px;">
-                <option value="">Без персонажа</option>
-            </select>
-            <select class="select-styled" id="editLoreWorld">
-                <option value="">Без мира</option>
-            </select>
-            <select class="select-styled" id="editLoreRoom">
-                <option value="">Без комнаты</option>
-            </select>
-            <input type="hidden" id="editLoreId" value="">
-            <button class="btn" onclick="updateLore()">Сохранить изменения</button>
-        </div>
+        <!-- ПОДКАТЕГОРИЯ (НОВОЕ) -->
+        <input type="text" id="loreSubcategory" placeholder="Подкатегория (например: Города, Войны, Боги...)">
+
+        <!-- КАТЕГОРИЯ (ВЫПАДАЮЩИЙ СПИСОК) -->
+        <select id="loreCategory" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="history">📜 История мира</option>
+            <option value="geography">🌍 География</option>
+            <option value="characters">👤 Персонажи</option>
+            <option value="events">⚡ События</option>
+            <option value="magic">🔮 Магия и технологии</option>
+            <option value="factions">🏴 Фракции и организации</option>
+            <option value="religion">⛪ Религия и верования</option>
+            <option value="culture">🎭 Культура и обычаи</option>
+            <option value="bestiary">🐉 Бестиарий</option>
+            <option value="items">📦 Артефакты и предметы</option>
+            <option value="timeline">📅 Хронология</option>
+            <option value="secrets">🔒 Тайны и секреты</option>
+            <option value="general" selected>📝 Общее</option>
+        </select>
+
+        <!-- ВАЖНОСТЬ (НОВОЕ) -->
+        <select id="loreImportance" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="1">⭐ Важность 1 (Неважно)</option>
+            <option value="2">⭐⭐ Важность 2</option>
+            <option value="3" selected>⭐⭐⭐ Важность 3</option>
+            <option value="4">⭐⭐⭐⭐ Важность 4</option>
+            <option value="5">⭐⭐⭐⭐⭐ Важность 5 (Ключевое)</option>
+        </select>
+
+        <!-- ДАТА В МИРЕ (НОВОЕ) -->
+        <input type="text" id="loreTimelineDate" placeholder="Дата в мире (например: 1245 год, Эпоха Рассвета)">
+
+        <!-- МЕСТО (НОВОЕ) -->
+        <input type="text" id="loreLocation" placeholder="Место действия (например: Город Аркейн)">
+
+        <textarea id="loreContent" placeholder="Содержание" style="min-height:120px;"></textarea>
+        <input type="text" id="loreTags" placeholder="Теги (через запятую)">
+
+        <!-- СЕКРЕТНО (НОВОЕ) -->
+        <label class="checkbox-label">
+            <input type="checkbox" id="loreIsSecret"> 🔒 Секретная информация (только для мастера)
+        </label>
+
+        <select class="select-styled" id="loreCharacter" style="margin-top:8px;">
+            <option value="">Без персонажа</option>
+        </select>
+        <select class="select-styled" id="loreWorld">
+            <option value="">Без мира</option>
+        </select>
+        <select class="select-styled" id="loreRoom">
+            <option value="">Без комнаты</option>
+        </select>
+        <button class="btn" onclick="saveLore()">Сохранить</button>
     </div>
+</div>
 
+<!-- ===== РЕДАКТИРОВАНИЕ ЛОРА ===== -->
+<div id="page-lore-edit" class="page">
+    <div class="flex-between">
+        <div><div class="page-title">Редактировать запись</div><div class="page-desc">Измени информацию</div></div>
+        <button class="btn-primary" onclick="showPage('lore')">Назад</button>
+    </div>
+    <div class="form-box">
+        <input type="text" id="editLoreTitle" placeholder="Заголовок">
+        
+        <!-- ТИП ЗАПИСИ -->
+        <select id="editLoreType" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="world">🌍 Мир</option>
+            <option value="location">📍 Локация</option>
+            <option value="character">👤 Персонаж</option>
+            <option value="event">⚡ Событие</option>
+            <option value="item">📦 Предмет</option>
+            <option value="faction">🏴 Фракция</option>
+            <option value="timeline">📅 Хронология</option>
+            <option value="history">📜 История</option>
+            <option value="magic">🔮 Магия</option>
+            <option value="religion">⛪ Религия</option>
+            <option value="secret">🔒 Секрет</option>
+            <option value="general" selected>📝 Общее</option>
+        </select>
+
+        <!-- ПОДКАТЕГОРИЯ -->
+        <input type="text" id="editLoreSubcategory" placeholder="Подкатегория (например: Города, Войны, Боги...)">
+
+        <!-- КАТЕГОРИЯ -->
+        <select id="editLoreCategory" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="history">📜 История мира</option>
+            <option value="geography">🌍 География</option>
+            <option value="characters">👤 Персонажи</option>
+            <option value="events">⚡ События</option>
+            <option value="magic">🔮 Магия и технологии</option>
+            <option value="factions">🏴 Фракции и организации</option>
+            <option value="religion">⛪ Религия и верования</option>
+            <option value="culture">🎭 Культура и обычаи</option>
+            <option value="bestiary">🐉 Бестиарий</option>
+            <option value="items">📦 Артефакты и предметы</option>
+            <option value="timeline">📅 Хронология</option>
+            <option value="secrets">🔒 Тайны и секреты</option>
+            <option value="general" selected>📝 Общее</option>
+        </select>
+
+        <!-- ВАЖНОСТЬ -->
+        <select id="editLoreImportance" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="1">⭐ Важность 1 (Неважно)</option>
+            <option value="2">⭐⭐ Важность 2</option>
+            <option value="3" selected>⭐⭐⭐ Важность 3</option>
+            <option value="4">⭐⭐⭐⭐ Важность 4</option>
+            <option value="5">⭐⭐⭐⭐⭐ Важность 5 (Ключевое)</option>
+        </select>
+
+        <!-- ДАТА -->
+        <input type="text" id="editLoreTimelineDate" placeholder="Дата в мире (например: 1245 год, Эпоха Рассвета)">
+
+        <!-- МЕСТО -->
+        <input type="text" id="editLoreLocation" placeholder="Место действия (например: Город Аркейн)">
+
+        <textarea id="editLoreContent" placeholder="Содержание" style="min-height:120px;"></textarea>
+        <input type="text" id="editLoreTags" placeholder="Теги (через запятую)">
+
+        <!-- СЕКРЕТНО -->
+        <label class="checkbox-label">
+            <input type="checkbox" id="editLoreIsSecret"> 🔒 Секретная информация (только для мастера)
+        </label>
+
+        <select class="select-styled" id="editLoreCharacter" style="margin-top:8px;">
+            <option value="">Без персонажа</option>
+        </select>
+        <select class="select-styled" id="editLoreWorld">
+            <option value="">Без мира</option>
+        </select>
+        <select class="select-styled" id="editLoreRoom">
+            <option value="">Без комнаты</option>
+        </select>
+        <input type="hidden" id="editLoreId" value="">
+        <button class="btn" onclick="updateLore()">Сохранить изменения</button>
+    </div>
+</div>
     <!-- ===== ЧАТ ===== -->
     <div id="page-chat" class="page">
         <div class="flex-between" style="margin-bottom:10px;">
@@ -5876,12 +5989,19 @@ async function saveLore() {
     var tags = document.getElementById('loreTags').value.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t; });
     var data = {
         title: document.getElementById('loreTitle').value.trim(),
-        category: document.getElementById('loreCategory').value.trim() || null,
+        category: document.getElementById('loreCategory').value,
         content: document.getElementById('loreContent').value.trim(),
         tags: tags,
         character_id: parseInt(document.getElementById('loreCharacter').value) || null,
         world_id: parseInt(document.getElementById('loreWorld').value) || null,
-        room_id: parseInt(document.getElementById('loreRoom').value) || null
+        room_id: parseInt(document.getElementById('loreRoom').value) || null,
+        // ===== НОВЫЕ ПОЛЯ =====
+        lore_type: document.getElementById('loreType').value,
+        subcategory: document.getElementById('loreSubcategory').value.trim() || null,
+        importance: parseInt(document.getElementById('loreImportance').value) || 3,
+        timeline_date: document.getElementById('loreTimelineDate').value.trim() || null,
+        location: document.getElementById('loreLocation').value.trim() || null,
+        is_secret: document.getElementById('loreIsSecret').checked
     };
     if (!data.title) { alert('Введите заголовок'); return; }
     if (!data.content) { alert('Введите содержание'); return; }
@@ -5904,7 +6024,6 @@ async function deleteLore(id) {
         loadLore();
     } catch(e) { alert('Ошибка удаления'); }
 }
-
 // ============================================
 // РЕДАКТИРОВАНИЕ ЛОРБУКА
 // ============================================
@@ -5926,9 +6045,15 @@ async function editLore(loreId) {
 
         document.getElementById('editLoreId').value = entry.id;
         document.getElementById('editLoreTitle').value = entry.title || '';
-        document.getElementById('editLoreCategory').value = entry.category || '';
+        document.getElementById('editLoreType').value = entry.lore_type || 'general';
+        document.getElementById('editLoreCategory').value = entry.category || 'general';
+        document.getElementById('editLoreSubcategory').value = entry.subcategory || '';
+        document.getElementById('editLoreImportance').value = entry.importance || 3;
+        document.getElementById('editLoreTimelineDate').value = entry.timeline_date || '';
+        document.getElementById('editLoreLocation').value = entry.location || '';
         document.getElementById('editLoreContent').value = entry.content || '';
         document.getElementById('editLoreTags').value = (entry.tags || []).join(', ');
+        document.getElementById('editLoreIsSecret').checked = entry.is_secret || false;
 
         await loadLoreSelects();
 
@@ -5962,12 +6087,19 @@ async function updateLore() {
 
     const data = {
         title: document.getElementById('editLoreTitle').value.trim(),
-        category: document.getElementById('editLoreCategory').value.trim() || null,
+        category: document.getElementById('editLoreCategory').value,
         content: document.getElementById('editLoreContent').value.trim(),
         tags: tags,
         character_id: parseInt(document.getElementById('editLoreCharacter').value) || null,
         world_id: parseInt(document.getElementById('editLoreWorld').value) || null,
-        room_id: parseInt(document.getElementById('editLoreRoom').value) || null
+        room_id: parseInt(document.getElementById('editLoreRoom').value) || null,
+        // ===== НОВЫЕ ПОЛЯ =====
+        lore_type: document.getElementById('editLoreType').value,
+        subcategory: document.getElementById('editLoreSubcategory').value.trim() || null,
+        importance: parseInt(document.getElementById('editLoreImportance').value) || 3,
+        timeline_date: document.getElementById('editLoreTimelineDate').value.trim() || null,
+        location: document.getElementById('editLoreLocation').value.trim() || null,
+        is_secret: document.getElementById('editLoreIsSecret').checked
     };
 
     if (!data.title) { alert('Введите заголовок'); return; }
@@ -5991,7 +6123,6 @@ async function updateLore() {
         alert('Ошибка: ' + e.message);
     }
 }
-
 // ============================================
 // ПОПУЛЯРНЫЕ (ГЛАВНАЯ)
 // ============================================
