@@ -1075,20 +1075,19 @@ async def get_memory(token: str, character_id: Optional[int] = None):
             "is_auto": m.is_auto
         } for m in memories]
 
-@app.post("/api/memory")
-async def create_memory(memory: MemoryCreate, token: str):
+@app.post("/api/lore")
+async def create_lore(lore: LoreCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
     
     with SessionLocal() as db:
-        if not user.active_persona_id:
-            return JSONResponse({"error": "Нет активной персоны"}, 400)
-        new_memory = Memory(**memory.dict(), user_id=user.id, persona_id=user.active_persona_id)
-        db.add(new_memory)
+        # ПРОБЛЕМА: lore.dict() не включает related_entities?
+        new_lore = LoreEntry(**lore.dict(), user_id=user.id)
+        db.add(new_lore)
         db.commit()
-        db.refresh(new_memory)
-        return {"id": new_memory.id, "content": new_memory.content, "success": True}
+        db.refresh(new_lore)
+        return {"id": new_lore.id, "title": new_lore.title, "success": True}
 
 @app.delete("/api/memory/{memory_id}")
 async def delete_memory(memory_id: int, token: str):
@@ -5055,7 +5054,7 @@ async function regenerateMessage(btn) {
 }
 
 // ============================================
-// РЕДАКТИРОВАНИЕ СООБЩЕНИЙ (РАСШИРЕННАЯ ВЕРСИЯ)
+// РЕДАКТИРОВАНИЕ СООБЩЕНИЙ (РАБОЧАЯ ВЕРСИЯ)
 // ============================================
 
 function startEditMessage(btn) {
@@ -5256,6 +5255,7 @@ async function loadChatPersonas() {
         });
     } catch(e) {}
 }
+
 async function sendMessage() {
     var input = document.getElementById('chatInput');
     var msg = input.value.trim();
@@ -5268,15 +5268,15 @@ async function sendMessage() {
     input.value = '';
     var div = document.getElementById('chatMessages');
     var typingDiv = document.createElement('div');
-typingDiv.className = 'typing-indicator';
-typingDiv.id = 'typingIndicator';
-typingDiv.innerHTML = `
-    <div class="msg-avatar">${chatCharacterAvatar ? '<img src="'+chatCharacterAvatar+'">' : '✦'}</div>
-    <div class="dots">
-        <span></span><span></span><span></span>
-    </div>
-`;
-div.appendChild(typingDiv);
+    typingDiv.className = 'typing-indicator';
+    typingDiv.id = 'typingIndicator';
+    typingDiv.innerHTML = `
+        <div class="msg-avatar">${chatCharacterAvatar ? '<img src="'+chatCharacterAvatar+'">' : '✦'}</div>
+        <div class="dots">
+            <span></span><span></span><span></span>
+        </div>
+    `;
+    div.appendChild(typingDiv);
     div.scrollTop = div.scrollHeight;
 
     try {
