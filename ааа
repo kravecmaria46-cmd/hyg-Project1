@@ -12,12 +12,12 @@ import shutil
 import secrets
 import re
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict  # <-- Убедитесь, что есть Dict
+from typing import Optional, List, Dict
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, Integer, ForeignKey, JSON, Float, func
+from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, Integer, ForeignKey, JSON, Float, func, text  # <--- ДОБАВЛЕН text
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError, OperationalError
@@ -88,7 +88,9 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 print(f"✅ База данных: {LOCAL_DB_PATH}")
 
 
-# ============================================# ============================================
+from sqlalchemy import text  # Добавьте в импорты в начале файла
+
+# ============================================
 # АВТОМАТИЧЕСКАЯ МИГРАЦИЯ БД
 # ============================================
 
@@ -96,10 +98,10 @@ def migrate_database():
     """Автоматически добавляет новые колонки в существующую БД"""
     with engine.connect() as conn:
         # Проверяем, есть ли таблица lore_entries
-        result = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='lore_entries'")
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='lore_entries'"))
         if result.fetchone():
             # Получаем существующие колонки
-            columns = conn.execute("PRAGMA table_info(lore_entries)").fetchall()
+            columns = conn.execute(text("PRAGMA table_info(lore_entries)")).fetchall()
             existing = [col[1] for col in columns]
             
             new_columns = {
@@ -115,14 +117,12 @@ def migrate_database():
             for name, type_ in new_columns.items():
                 if name not in existing:
                     try:
-                        conn.execute(f"ALTER TABLE lore_entries ADD COLUMN {name} {type_}")
+                        conn.execute(text(f"ALTER TABLE lore_entries ADD COLUMN {name} {type_}"))
                         print(f"✅ Добавлена колонка: {name}")
                     except Exception as e:
                         print(f"⚠️ Ошибка добавления {name}: {e}")
         else:
             print("ℹ️ Таблица lore_entries ещё не создана")
-
-migrate_database()
 
 # МОДЕЛИ (ТЕПЕРЬ Base ОПРЕДЕЛЕН!)
 # ============================================
