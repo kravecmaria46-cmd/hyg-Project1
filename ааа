@@ -193,6 +193,8 @@ class LoreEntry(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)
+    
+    # ===== СУЩЕСТВУЮЩИЕ ПОЛЯ =====
     category = Column(String(50), nullable=True)
     tags = Column(JSON, default=list)
     is_public = Column(Boolean, default=False)
@@ -202,6 +204,15 @@ class LoreEntry(Base):
     character_id = Column(Integer, nullable=True)
     world_id = Column(Integer, nullable=True)
     room_id = Column(Integer, nullable=True)
+    
+    # ===== НОВЫЕ ПОЛЯ (ДОБАВЛЯЙТЕ СЮДА) =====
+    lore_type = Column(String(30), default="general")  # world, character, event, location, item, timeline
+    importance = Column(Integer, default=1)  # 1-5
+    related_entities = Column(JSON, default=list)  # связанные персонажи/миры/события
+    timeline_date = Column(String(50), nullable=True)  # дата в мире
+    location = Column(String(200), nullable=True)  # место действия
+    is_secret = Column(Boolean, default=False)  # секретный лор
+    subcategory = Column(String(50), nullable=True)  # подкатегория
 
 class Room(Base):
     __tablename__ = "rooms"
@@ -247,6 +258,41 @@ class MemoryConsolidation(Base):
     source_memory_ids = Column(JSON, default=list)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
+
+    # ============================================
+# КАТЕГОРИИ ЛОРБУКА
+# ============================================
+
+LORE_TYPES = {
+    "world": "🌍 Мир",
+    "location": "📍 Локация", 
+    "character": "👤 Персонаж",
+    "event": "⚡ Событие",
+    "item": "📦 Предмет",
+    "faction": "🏴 Фракция",
+    "timeline": "📅 Хронология",
+    "history": "📜 История",
+    "magic": "🔮 Магия",
+    "religion": "⛪ Религия",
+    "secret": "🔒 Секрет",
+    "general": "📝 Общее"
+}
+
+LORE_CATEGORIES = {
+    "history": "📜 История мира",
+    "geography": "🌍 География", 
+    "characters": "👤 Персонажи",
+    "events": "⚡ События",
+    "magic": "🔮 Магия и технологии",
+    "factions": "🏴 Фракции и организации",
+    "religion": "⛪ Религия и верования",
+    "culture": "🎭 Культура и обычаи",
+    "bestiary": "🐉 Бестиарий",
+    "items": "📦 Артефакты и предметы",
+    "timeline": "📅 Хронология",
+    "secrets": "🔒 Тайны и секреты",
+    "general": "📝 Общее"
+}
 
 # ============================================
 # СОЗДАНИЕ БАЗЫ (С МИГРАЦИЕЙ)
@@ -1080,6 +1126,63 @@ async def delete_lore(lore_id: int, token: str):
         db.delete(lore)
         db.commit()
         return {"success": True}
+        
+        # ============================================
+# РАСШИРЕННЫЙ ЛОРБУК
+# ============================================
+
+@app.get("/api/lore/world/{world_id}")
+async def get_lore_by_world(world_id: int, token: str):
+    """Получить весь лор мира"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        lore = db.query(LoreEntry).filter(
+            LoreEntry.world_id == world_id,
+            LoreEntry.user_id == user.id
+        ).order_by(LoreEntry.category, LoreEntry.title).all()
+        
+        # Группируем по категориям
+        grouped = {}
+        for entry in lore:
+            cat = entry.category or "general"
+            if cat not in grouped:
+                grouped[cat] = []
+            grouped[cat].append({
+                "id": entry.id,
+                "title": entry.title,
+                "content": entry.content[:200] + "..." if len(entry.content) > 200 else entry.content,
+                "lore_type": entry.lore_type,
+                "importance": entry.importance
+            })
+        
+        return grouped
+
+@app.get("/api/lore/timeline/{world_id}")
+async def get_lore_timeline(world_id: int, token: str):
+    """Получить хронологию мира"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        events = db.query(LoreEntry).filter(
+            LoreEntry.world_id == world_id,
+            LoreEntry.lore_type == "timeline",
+            LoreEntry.user_id == user.id
+        ).order_by(LoreEntry.timeline_date).all()
+        
+        return [{
+            "id": e.id,
+            "title": e.title,
+            "date": e.timeline_date,
+            "content": e.content,
+            "importance": e.importance
+        } for e in events]
+
+# --- КОМНАТЫ ---
 
 # --- КОМНАТЫ ---
 
@@ -4784,7 +4887,7 @@ async function regenerateMessage(btn) {
 }
 
 // ============================================
-// РЕДАКТИРОВАНИЕ СООБЩЕНИЙ
+// РЕДАКТИРОВАНИЕ СООБЩЕНИЙ (РАСШИРЕННАЯ ВЕРСИЯ)
 // ============================================
 
 function startEditMessage(btn) {
@@ -4800,13 +4903,11 @@ function startEditMessage(btn) {
         return;
     }
 
-    // Проверяем, не редактируется ли уже
     if (wrapper.querySelector('.edit-container')) {
         return;
     }
 
     var originalText = content.textContent;
-    // Убираем "✎ отредактировано" и подобные пометки
     var cleanText = originalText.replace(/✎ отредактировано/g, '').replace(/🔄 регенерировано/g, '').trim();
 
     var actions = wrapper.querySelector('.msg-actions');
@@ -4814,15 +4915,45 @@ function startEditMessage(btn) {
 
     var editContainer = document.createElement('div');
     editContainer.className = 'edit-container';
-    editContainer.style.cssText = 'display:flex; gap:8px; align-items:center; flex:1; width:100%;';
+    editContainer.style.cssText = 'display:flex; flex-direction:column; gap:8px; flex:1; width:100%; padding:4px 0;';
 
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'edit-input';
-    input.value = cleanText;
-    input.style.cssText = 'flex:1; padding:8px 12px; background:rgba(255,255,255,0.06); border:1px solid rgba(48,76,47,0.3); border-radius:8px; color:#fff; font-size:14px; font-family:inherit; outline:none;';
-    input.onkeydown = function(e) {
-        if (e.key === 'Enter') {
+    // ТЕКСТОВОЕ ПОЛЕ (МНОГОСТРОЧНОЕ)
+    var textarea = document.createElement('textarea');
+    textarea.className = 'edit-textarea';
+    textarea.value = cleanText;
+    textarea.style.cssText = 'width:100%; padding:10px 14px; background:rgba(255,255,255,0.06); border:1px solid rgba(48,76,47,0.3); border-radius:8px; color:#fff; font-size:14px; font-family:inherit; outline:none; resize:vertical; min-height:60px; max-height:300px; line-height:1.5;';
+    textarea.rows = 3;
+
+    // Автоматическое расширение
+    textarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = this.scrollHeight + 'px';
+    });
+
+    // Кнопки
+    var btnContainer = document.createElement('div');
+    btnContainer.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
+    btnContainer.innerHTML = `
+        <button class="save-edit-btn" onclick="saveEdit(this)" style="padding:6px 20px; border-radius:8px; border:1px solid rgba(48,76,47,0.3); background:rgba(48,76,47,0.2); color:#fff; cursor:pointer; font-size:13px;">💾 Сохранить</button>
+        <button class="cancel-edit-btn" onclick="cancelEdit(this)" style="padding:6px 20px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:#888; cursor:pointer; font-size:13px;">✕ Отмена</button>
+    `;
+
+    editContainer.appendChild(textarea);
+    editContainer.appendChild(btnContainer);
+
+    content.style.display = 'none';
+    content.parentNode.insertBefore(editContainer, content.nextSibling);
+
+    setTimeout(function() {
+        textarea.focus();
+        textarea.select();
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+    }, 50);
+
+    // Ctrl+Enter для сохранения
+    textarea.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             saveEdit(this);
         }
@@ -4830,25 +4961,7 @@ function startEditMessage(btn) {
             e.preventDefault();
             cancelEdit(this);
         }
-    };
-
-    var editActions = document.createElement('div');
-    editActions.className = 'edit-actions';
-    editActions.innerHTML = `
-        <button class="save-btn" onclick="saveEdit(this)" style="padding:4px 12px; border-radius:8px; border:1px solid rgba(48,76,47,0.3); background:rgba(48,76,47,0.2); color:#fff; cursor:pointer; font-size:12px;">💾</button>
-        <button class="cancel-edit-btn" onclick="cancelEdit(this)" style="padding:4px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:#888; cursor:pointer; font-size:12px;">✕</button>
-    `;
-
-    editContainer.appendChild(input);
-    editContainer.appendChild(editActions);
-
-    content.style.display = 'none';
-    content.parentNode.insertBefore(editContainer, content.nextSibling);
-
-    setTimeout(function() {
-        input.focus();
-        input.select();
-    }, 50);
+    });
 }
 
 async function saveEdit(btn) {
@@ -4864,13 +4977,13 @@ async function saveEdit(btn) {
         return;
     }
 
-    var input = editContainer.querySelector('.edit-input');
-    if (!input) {
-        console.error('❌ Не найден input');
+    var textarea = editContainer.querySelector('.edit-textarea');
+    if (!textarea) {
+        console.error('❌ Не найден textarea');
         return;
     }
 
-    var newText = input.value.trim();
+    var newText = textarea.value.trim();
     if (!newText) {
         alert('Сообщение не может быть пустым');
         return;
@@ -4886,7 +4999,6 @@ async function saveEdit(btn) {
     var messageId = wrapper.dataset.messageId;
     var originalText = content.textContent;
 
-    // Показываем индикатор сохранения
     content.textContent = '⏳ Сохранение...';
     content.style.display = 'block';
     editContainer.remove();
@@ -4894,12 +5006,8 @@ async function saveEdit(btn) {
     if (actions) actions.style.display = 'flex';
 
     try {
-        // Извлекаем числовой ID из messageId (формат: msg_123)
         var numericId = parseInt(messageId.replace('msg_', ''));
         if (isNaN(numericId)) {
-            // Если ID не числовой, пробуем найти по индексу
-            console.warn('⚠️ Нечисловой messageId, ищем альтернативный способ');
-            // Просто обновляем локально
             content.textContent = newText;
             var editNote = document.createElement('span');
             editNote.className = 'edit-note';
@@ -4923,7 +5031,6 @@ async function saveEdit(btn) {
 
         if (data.success) {
             content.textContent = newText;
-            // Удаляем старые пометки
             var oldNotes = content.querySelectorAll('.edit-note, .regen-note');
             oldNotes.forEach(function(note) { note.remove(); });
             
@@ -4981,7 +5088,6 @@ async function loadChatPersonas() {
         });
     } catch(e) {}
 }
-
 async function sendMessage() {
     var input = document.getElementById('chatInput');
     var msg = input.value.trim();
