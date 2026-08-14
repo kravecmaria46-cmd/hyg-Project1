@@ -1759,7 +1759,7 @@ async def chat(chat_req: ChatRequest, token: str):
             db.add(memory)
             db.commit()
             
-                    # ========== СОХРАНЯЕМ В ИЕРАРХИЧЕСКУЮ ПАМЯТЬ ==========
+                            # ========== СОХРАНЯЕМ В ИЕРАРХИЧЕСКУЮ ПАМЯТЬ ==========
         save_hierarchical_memory(
             user_id=user.id,
             content=chat_req.message,
@@ -1770,12 +1770,12 @@ async def chat(chat_req: ChatRequest, token: str):
         )
         # =======================================================
 
-     return {
-    "response": bot_response,
-    "character_id": character_id,
-    "character_name": character_name,
-    "message_id": chat_entry.id  # <-- ЭТО ДОЛЖНО БЫТЬ!
-}
+        return {
+            "response": bot_response,
+            "character_id": character_id,
+            "character_name": character_name,
+            "message_id": chat_entry.id
+        }
 # --- РЕГЕНЕРАЦИЯ ОТВЕТА (FIXED) ---
 
 @app.post("/api/chat/regenerate")
