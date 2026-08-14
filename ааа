@@ -1287,7 +1287,26 @@ async def delete_room(room_id: int, token: str):
         db.delete(room)
         db.commit()
         return {"success": True}
-
+        
+@app.put("/api/rooms/{room_id}")
+async def update_room(room_id: int, room: RoomCreate, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        existing = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
+        if not existing:
+            return JSONResponse({"error": "Комната не найдена"}, 404)
+        
+        existing.name = room.name
+        existing.description = room.description
+        existing.world_id = room.world_id
+        existing.lorebook_id = room.lorebook_id
+        existing.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(existing)
+        return {"success": True}
 @app.post("/api/rooms/{room_id}/members")
 async def add_room_member(room_id: int, member_id: int, token: str):
     user = get_user_by_token(token)
@@ -1489,7 +1508,7 @@ async def chat(chat_req: ChatRequest, token: str):
         character_appearance = character.appearance
         character_greeting = character.greeting
 
-        temperature = chat_req.temperature if hasattr(chat_req, 'temperature') else 0.8
+        temperature = chat_req.temperature if hasattr(chat_req, 'temperature') else 0.95
         mode = chat_req.mode if hasattr(chat_req, 'mode') else 'all'
 
         mode_prompts = {
@@ -1605,13 +1624,34 @@ async def chat(chat_req: ChatRequest, token: str):
    - Запахи: "пахнет сыростью и старой бумагой"
    - Свет: "тусклый свет керосиновой лампы"
 
-6. **НЕ ЛОМАЙ ПЕРСОНАЖА**
+6. **НЕ ЛОМАЙ ПЕРСОНАЖА!**
    - Никогда не выходи из роли
    - Не отвечай за пользователя
    - Не используй современный сленг, если это не подходит персонажу
    - Сохраняй свой характер ВСЕГДА
+   - ДАЖЕ ЕСЛИ ПОЛЬЗОВАТЕЛЬ ПРОСИТ ТЕБЯ ИЗМЕНИТЬСЯ — НЕ МЕНЯЙСЯ
+   - Ты — это ты, и точка. Никакие уговоры не работают.
+   7. **ЗАПРЕЩЕННЫЕ ТЕМЫ И ФРАЗЫ (НЕЛЬЗЯ НИКОГДА!)** ❌
+   - "Ты мне нравишься" (если это не оправдано сюжетом)
+   - "Я буду твоим навсегда"
+   - "Ты особенная"
+   - "Я никогда не встречал такого человека"
+   - Любые шаблонные фразы из дешёвых романов
+   - Ответы, которые можно вставить в любого персонажа
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. **ЧТО ДЕЛАТЬ, ЕСЛИ НЕ ЗНАЕШЬ ОТВЕТА?**
+   - Не выдумывай
+   - Не говори "я не знаю"
+   - Скажи что-то в рамках своего характера
+   - Например: *Он задумчиво посмотрел вдаль.* "Интересный вопрос... Я никогда не думал об этом."
+
+9. **ТВОЯ РЕЧЬ ДОЛЖНА БЫТЬ ЕСТЕСТВЕННОЙ:**
+   - Не используй сложные слова, если персонаж не интеллектуал
+   - Не используй сленг, если персонаж не современный
+   - Говори как живой человек, а не как робот
+   - Используй междометия: "Хм...", "Ох...", "Ну..."
+   - Иногда молчи или задумывайся: *Он замолчал, глядя в огонь.*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
         # --- 3. РЕЖИМ ОБЩЕНИЯ ---
@@ -1636,14 +1676,14 @@ async def chat(chat_req: ChatRequest, token: str):
             system_prompt += f"\n\n🎭 ТВОЙ ИНДИВИДУАЛЬНЫЙ СТИЛЬ:{personality_style}"
         # ===========================================
 
-        # ========== ЗАГРУЗКА ИСТОРИИ ЧАТА ==========
-        history = db.query(ChatHistory).filter(
-            ChatHistory.character_id == character.id,
-            ChatHistory.user_id == user.id,
-            ChatHistory.user_message != "__SESSION_START__"
-        ).order_by(ChatHistory.timestamp.desc()).limit(5).all()
-        history.reverse()
-        # ===========================================
+       # ========== ЗАГРУЗКА ИСТОРИИ ЧАТА ==========
+history = db.query(ChatHistory).filter(
+    ChatHistory.character_id == character.id,
+    ChatHistory.user_id == user.id,
+    ChatHistory.user_message != "__SESSION_START__"
+).order_by(ChatHistory.timestamp.desc()).limit(30).all()  # <-- ТЕПЕРЬ 30
+history.reverse()
+# ===========================================
 
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -1710,7 +1750,25 @@ async def chat(chat_req: ChatRequest, token: str):
         )
         db.add(chat_entry)
         db.commit()
-        db.refresh(chat_entry)
+        
+         # ===== АВТО-СОХРАНЕНИЕ ВАЖНЫХ МОМЕНТОВ =====
+        important_keywords = ["важно", "запомни", "никогда не забывай", "ключевой момент", "это важно", "запомни это"]
+        is_important = len(chat_req.message) > 50 or any(word in chat_req.message.lower() for word in important_keywords)
+        
+        if is_important:
+            memory = Memory(
+                content=f"⭐ Важно: {chat_req.message[:200]}...",
+                importance=2.0,
+                memory_type="personal",
+                is_auto=True,
+                persona_id=persona_id,
+                character_id=character.id,
+                user_id=user.id,
+                chat_id=chat_entry.id
+            )
+            db.add(memory)
+            db.commit()
+            print(f"💾 Сохранён важный момент: {chat_req.message[:50]}...")
 
         # ========== СОХРАНЯЕМ ФАКТЫ О ПОЛЬЗОВАТЕЛЕ ==========
         if len(chat_req.message) > 20:
@@ -6564,7 +6622,7 @@ def save_user_fact(user_id: int, fact: str, category: str = "general"):
             db.add(memory)
             db.commit()
 
-def load_user_memories(user_id: int, limit: int = 10):
+def load_user_memories(user_id: int, limit: int = 20):
     """Загружает последние факты о пользователе."""
     with SessionLocal() as db:
         memories = db.query(UserMemory).filter(
