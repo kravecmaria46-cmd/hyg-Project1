@@ -6697,6 +6697,105 @@ window.addEventListener('load', function() {
     }
 });
 // ============================================
+// ЗАГРУЗКА ПЕРСОН ДЛЯ ЧАТА
+// ============================================
+
+async function loadChatPersonas() {
+    if (!authToken) return;
+    try {
+        var r = await fetch(getAuthUrl('/api/personas'));
+        var personas = await r.json();
+        var sel = document.getElementById('chatPersonaSelect');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">Без персоны</option>';
+        personas.forEach(function(p) {
+            sel.innerHTML += '<option value="' + p.id + '" ' + (p.is_active ? 'selected' : '') + '>' + p.name + '</option>';
+        });
+    } catch(e) {
+        console.error('Ошибка загрузки персон:', e);
+    }
+}
+
+// ============================================
+// НАСТРОЙКИ ЧАТА
+// ============================================
+
+function toggleChatSettings() {
+    var panel = document.getElementById('chatSettingsPanel');
+    if (!panel) return;
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function setChatLength(len) {
+    document.querySelectorAll('.chat-len-btn').forEach(function(b) {
+        b.classList.remove('active');
+        b.style.background = 'transparent';
+        b.style.color = '#888';
+        b.style.borderColor = 'rgba(255,255,255,0.1)';
+    });
+    var btn = document.querySelector('.chat-len-btn[data-len="' + len + '"]');
+    if (btn) {
+        btn.classList.add('active');
+        btn.style.background = 'rgba(48,76,47,0.15)';
+        btn.style.color = '#fff';
+        btn.style.borderColor = 'rgba(48,76,47,0.3)';
+    }
+}
+
+// ============================================
+// ОТКРЫТИЕ ПАМЯТИ, ЛОРБУКА, РЕДАКТОРА ИЗ ЧАТА
+// ============================================
+
+function openChatMemory() {
+    if (!chatCharacterId) {
+        alert('Выберите персонажа');
+        return;
+    }
+    showPage('memory');
+    setTimeout(function() {
+        var sel = document.getElementById('memoryCharacter');
+        if (sel) {
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value == chatCharacterId) {
+                    sel.value = chatCharacterId;
+                    break;
+                }
+            }
+        }
+        loadMemory();
+    }, 300);
+}
+
+function openChatLore() {
+    if (!chatCharacterId) {
+        alert('Выберите персонажа');
+        return;
+    }
+    showPage('lore');
+    setTimeout(function() {
+        var sel = document.getElementById('loreCharacter');
+        if (sel) {
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value == chatCharacterId) {
+                    sel.value = chatCharacterId;
+                    break;
+                }
+            }
+        }
+        loadLore();
+    }, 300);
+}
+
+function openCharacterEditor() {
+    if (!chatCharacterId) {
+        alert('Выберите персонажа');
+        return;
+    }
+    showEditCharacter(chatCharacterId);
+}
+
+
+// ============================================
 // ИНДИКАТОР ЗАГРУЗКИ
 // ============================================
 
