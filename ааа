@@ -1287,7 +1287,7 @@ async def delete_room(room_id: int, token: str):
         db.delete(room)
         db.commit()
         return {"success": True}
-        
+
 @app.put("/api/rooms/{room_id}")
 async def update_room(room_id: int, room: RoomCreate, token: str):
     user = get_user_by_token(token)
@@ -1676,14 +1676,14 @@ async def chat(chat_req: ChatRequest, token: str):
             system_prompt += f"\n\n🎭 ТВОЙ ИНДИВИДУАЛЬНЫЙ СТИЛЬ:{personality_style}"
         # ===========================================
 
-       # ========== ЗАГРУЗКА ИСТОРИИ ЧАТА ==========
-history = db.query(ChatHistory).filter(
-    ChatHistory.character_id == character.id,
-    ChatHistory.user_id == user.id,
-    ChatHistory.user_message != "__SESSION_START__"
-).order_by(ChatHistory.timestamp.desc()).limit(30).all()  # <-- ТЕПЕРЬ 30
-history.reverse()
-# ===========================================
+              # ========== ЗАГРУЗКА ИСТОРИИ ЧАТА ==========
+        history = db.query(ChatHistory).filter(
+            ChatHistory.character_id == character.id,
+            ChatHistory.user_id == user.id,
+            ChatHistory.user_message != "__SESSION_START__"
+        ).order_by(ChatHistory.timestamp.desc()).limit(30).all()
+        history.reverse()
+        # ===========================================
 
         messages = [{"role": "system", "content": system_prompt}]
 
