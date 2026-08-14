@@ -339,22 +339,44 @@ try:
     with engine.connect() as conn:
         # Проверяем тип БД
         if DATABASE_URL.startswith("sqlite"):
-            # Для SQLite - просто пытаемся добавить колонку
+            # Для SQLite - просто пытаемся добавить колонки
+            
+            # Колонка world_id для memory_hierarchy
             try:
                 conn.execute("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER")
                 conn.commit()
                 print("✅ Колонка world_id добавлена в SQLite")
             except Exception as e:
-                # Колонка уже существует или другая ошибка
-                print(f"ℹ️ Колонка уже существует или ошибка: {e}")
+                print(f"ℹ️ Колонка world_id уже существует или ошибка: {e}")
+            
+            # ===== ДОБАВЛЯЕМ key_traits ДЛЯ characters =====
+            try:
+                conn.execute("ALTER TABLE characters ADD COLUMN key_traits TEXT")
+                conn.commit()
+                print("✅ Колонка key_traits добавлена в SQLite")
+            except Exception as e:
+                print(f"ℹ️ Колонка key_traits уже существует или ошибка: {e}")
+            # ===============================================
+            
         else:
             # Для PostgreSQL/MySQL с внешним ключом
+            
+            # Колонка world_id для memory_hierarchy
             try:
                 conn.execute("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER REFERENCES worlds(id)")
                 conn.commit()
                 print("✅ Колонка world_id добавлена")
             except Exception as e:
-                print(f"ℹ️ Колонка уже существует или ошибка: {e}")
+                print(f"ℹ️ Колонка world_id уже существует или ошибка: {e}")
+            
+            # ===== ДОБАВЛЯЕМ key_traits ДЛЯ characters =====
+            try:
+                conn.execute("ALTER TABLE characters ADD COLUMN key_traits TEXT")
+                conn.commit()
+                print("✅ Колонка key_traits добавлена")
+            except Exception as e:
+                print(f"ℹ️ Колонка key_traits уже существует или ошибка: {e}")
+            # ===============================================
     
     # Создаем остальные таблицы (если их нет)
     Base.metadata.create_all(bind=engine)
@@ -362,7 +384,6 @@ try:
     
 except Exception as e:
     print(f"❌ Ошибка: {e}")
-
 # ============================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СЕССИЙ (FIXED)
 # ============================================
