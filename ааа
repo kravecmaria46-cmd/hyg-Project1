@@ -6793,3 +6793,7 @@ def start_server():
     print(f"📁 БД: {LOCAL_DB_PATH}")
     print(f"🔒 Доступ только с этого устройства!")
     print("=" * 50)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=10000)
