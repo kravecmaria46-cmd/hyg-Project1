@@ -1868,41 +1868,6 @@ async def get_chat_history(token: str, character_id: int, limit: int = 50):
             result.append({"role": "assistant", "content": h.bot_response})
         return result
 
-# --- РЕДАКТИРОВАНИЕ СООБЩЕНИЯ ---
-
-@app.put("/api/chat/message")
-async def edit_message(req: EditMessageRequest, token: str):
-    user = get_user_by_token(token)
-    if not user:
-        return JSONResponse({"error": "Не авторизован"}, 401)
-    
-    with SessionLocal() as db:
-        chat_entry = db.query(ChatHistory).filter(
-            ChatHistory.id == req.message_id,
-            ChatHistory.user_id == user.id
-        ).first()
-
-        if not chat_entry:
-            return JSONResponse({"error": "Сообщение не найдено"}, 404)
-
-        if req.is_bot:
-            old_content = chat_entry.bot_response
-            chat_entry.bot_response = req.new_content
-        else:
-            old_content = chat_entry.user_message
-            chat_entry.user_message = req.new_content
-
-        chat_entry.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(chat_entry)
-
-        return {
-            "success": True,
-            "message_id": req.message_id,
-            "new_content": req.new_content,
-            "old_content": old_content
-        }
-
 # --- ОЧИСТКА / УДАЛЕНИЕ ВСЕХ СООБЩЕНИЙ С ПЕРСОНАЖЕМ ---
 
 @app.post("/api/chat/{character_id}/clear")
@@ -7058,17 +7023,47 @@ try:
 except Exception as e:
     print(f"❌ Ошибка создания таблиц: {e}")
     
-# ============================================
-# ЗАПУСК СЕРВЕРА (ТОЛЬКО ЛОКАЛЬНО!)
-# ============================================
+@app.put("/api/chat/message")
+async def edit_message(req: EditMessageRequest, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        chat_entry = db.query(ChatHistory).filter(
+            ChatHistory.id == req.message_id,
+            ChatHistory.user_id == user.id
+        ).first()
 
-import platform
+        if not chat_entry:
+            return JSONResponse({"error": "Сообщение не найдено"}, 404)
+
+        if req.is_bot:
+            old_content = chat_entry.bot_response
+            chat_entry.bot_response = req.new_content
+        else:
+            old_content = chat_entry.user_message
+            chat_entry.user_message = req.new_content
+
+        chat_entry.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(chat_entry)
+
+        return {
+            "success": True,
+            "message_id": req.message_id,
+            "new_content": req.new_content,
+            "old_content": old_content
+        }
+
+# ============================================
+# ЗАПУСК СЕРВЕРА
+# ============================================
 
 @app.get("/")
 @app.get("/{path:path}")
 async def serve_frontend():
     return HTMLResponse(HTML)
-
 def start_server():
     """Запускает сервер ТОЛЬКО на локальном интерфейсе"""
     port = int(os.environ.get("PORT", 10000))
