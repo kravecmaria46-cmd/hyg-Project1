@@ -544,6 +544,41 @@ async def upload_file(file: UploadFile = File(...)):
 # API ЭНДПОИНТЫ
 # ============================================
 
+# --- РЕДАКТИРОВАНИЕ СООБЩЕНИЯ (ДОБАВИТЬ СЮДА!) ---
+
+@app.put("/api/chat/message")
+async def edit_message(req: EditMessageRequest, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        chat_entry = db.query(ChatHistory).filter(
+            ChatHistory.id == req.message_id,
+            ChatHistory.user_id == user.id
+        ).first()
+
+        if not chat_entry:
+            return JSONResponse({"error": "Сообщение не найдено"}, 404)
+
+        if req.is_bot:
+            old_content = chat_entry.bot_response
+            chat_entry.bot_response = req.new_content
+        else:
+            old_content = chat_entry.user_message
+            chat_entry.user_message = req.new_content
+
+        chat_entry.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(chat_entry)
+
+        return {
+            "success": True,
+            "message_id": req.message_id,
+            "new_content": req.new_content,
+            "old_content": old_content
+        }
+
 # --- АВТОРИЗАЦИЯ ---
 
 @app.post("/api/register")
@@ -1864,8 +1899,16 @@ async def get_chat_history(token: str, character_id: int, limit: int = 50):
         
         result = []
         for h in history:
-            result.append({"role": "user", "content": h.user_message})
-            result.append({"role": "assistant", "content": h.bot_response})
+            result.append({
+                "role": "user",
+                "content": h.user_message,
+                "id": h.id  # <-- ДОБАВЛЯЕМ
+            })
+            result.append({
+                "role": "assistant",
+                "content": h.bot_response,
+                "id": h.id  # <-- ДОБАВЛЯЕМ
+            })
         return result
 
 # --- ОЧИСТКА / УДАЛЕНИЕ ВСЕХ СООБЩЕНИЙ С ПЕРСОНАЖЕМ ---
@@ -4804,26 +4847,30 @@ async function loadChatHistory(characterId) {
                     var char = chars.find(function(c) { return c.id === characterId; });
                     if (char && char.greeting && !chatGreetingSent) {
                         var msgId = 'msg_' + (++messageIdCounter);
-                        addBotMessage(char.greeting, msgId);
+                        // Приветствие не имеет ID в БД
+                        addBotMessage(char.greeting, msgId, null);
                         chatGreetingSent = true;
                     }
                 });
             return;
         }
 
+        // ОТОБРАЖАЕМ ИСТОРИЮ С СОХРАНЕНИЕМ РЕАЛЬНЫХ ID ИЗ БД
         for (var i = 0; i < history.length; i += 2) {
             if (i < history.length) {
                 var userMsg = history[i];
                 if (userMsg.role === 'user') {
                     var userMsgId = 'msg_' + (++messageIdCounter);
-                    addUserMessage(userMsg.content, userMsgId);
+                    // Передаём реальный ID из БД
+                    addUserMessage(userMsg.content, userMsgId, userMsg.id || null);
                 }
             }
             if (i + 1 < history.length) {
                 var botMsg = history[i + 1];
                 if (botMsg.role === 'assistant') {
                     var botMsgId = 'msg_' + (++messageIdCounter);
-                    addBotMessage(botMsg.content, botMsgId);
+                    // Передаём реальный ID из БД
+                    addBotMessage(botMsg.content, botMsgId, botMsg.id || null);
                 }
             }
         }
@@ -4834,7 +4881,7 @@ async function loadChatHistory(characterId) {
     }
 }
 
-function addUserMessage(text, messageId = null) {
+function addUserMessage(text, messageId = null, dbId = null) {
     var div = document.getElementById('chatMessages');
     var avatar = document.getElementById('profileAvatarPreview')?.src || '';
 
@@ -4848,6 +4895,7 @@ function addUserMessage(text, messageId = null) {
     var wrapper = document.createElement('div');
     wrapper.className = 'msg-wrapper user';
     wrapper.dataset.messageId = messageId;
+    wrapper.dataset.dbId = dbId || ''; // Сохраняем реальный ID из БД
     wrapper.dataset.isBot = 'false';
     if (isSameUser) wrapper.classList.add('same-user');
 
@@ -4862,7 +4910,7 @@ function addUserMessage(text, messageId = null) {
 
     var actions = document.createElement('div');
     actions.className = 'msg-actions';
-    actions.innerHTML = '<button class="edit-btn" onclick="startEditMessage(this)" title="Редактировать" /button>';
+    actions.innerHTML = '<button class="edit-btn" onclick="startEditMessage(this)" title="Редактировать">✏️</button>';
     
     var avatarDiv = document.createElement('div');
     avatarDiv.className = 'msg-avatar';
@@ -4883,7 +4931,8 @@ function addUserMessage(text, messageId = null) {
 
     return messageId;
 }
-function addBotMessage(text, messageId = null) {
+
+function addBotMessage(text, messageId = null, dbId = null) {
     var div = document.getElementById('chatMessages');
     var avatar = chatCharacterAvatar || '';
 
@@ -4897,6 +4946,7 @@ function addBotMessage(text, messageId = null) {
     var wrapper = document.createElement('div');
     wrapper.className = 'msg-wrapper bot';
     wrapper.dataset.messageId = messageId;
+    wrapper.dataset.dbId = dbId || ''; // Сохраняем реальный ID из БД
     wrapper.dataset.isBot = 'true';
     if (isSameBot) wrapper.classList.add('same-user');
 
@@ -5019,7 +5069,7 @@ async function regenerateMessage(btn) {
 }
 
 // ============================================
-// РЕДАКТИРОВАНИЕ СООБЩЕНИЙ (РАБОЧАЯ ВЕРСИЯ)
+// РЕДАКТИРОВАНИЕ СООБЩЕНИЙ (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 // ============================================
 
 function startEditMessage(btn) {
@@ -5128,7 +5178,7 @@ async function saveEdit(btn) {
     }
 
     var isBot = wrapper.dataset.isBot === 'true';
-    var messageId = wrapper.dataset.messageId;
+    var dbId = wrapper.dataset.dbId; // РЕАЛЬНЫЙ ID ИЗ БД
     var originalText = content.textContent;
 
     content.textContent = '⏳ Сохранение...';
@@ -5137,17 +5187,28 @@ async function saveEdit(btn) {
     var actions = wrapper.querySelector('.msg-actions');
     if (actions) actions.style.display = 'flex';
 
+    // ПРОВЕРЯЕМ, ЕСТЬ ЛИ РЕАЛЬНЫЙ ID ИЗ БД
+    if (!dbId || dbId === 'null' || dbId === '' || dbId === 'undefined') {
+        // Это новое сообщение без ID в БД - обновляем локально
+        content.textContent = newText;
+        var oldNotes = content.querySelectorAll('.edit-note, .regen-note');
+        oldNotes.forEach(function(note) { note.remove(); });
+        
+        var editNote = document.createElement('span');
+        editNote.className = 'edit-note';
+        editNote.style.cssText = 'font-size:11px; color:#666; margin-left:8px;';
+        editNote.textContent = '✎ отредактировано (локально)';
+        content.appendChild(editNote);
+        return;
+    }
+
     try {
-        var numericId = parseInt(messageId.replace('msg_', ''));
-        if (isNaN(numericId)) {
-            content.textContent = newText;
-            var editNote = document.createElement('span');
-            editNote.className = 'edit-note';
-            editNote.style.cssText = 'font-size:11px; color:#666; margin-left:8px;';
-            editNote.textContent = '✎ отредактировано';
-            content.appendChild(editNote);
-            return;
+        var numericId = parseInt(dbId);
+        if (isNaN(numericId) || numericId <= 0) {
+            throw new Error('Неверный ID сообщения: ' + dbId);
         }
+
+        console.log('📤 Отправка запроса на редактирование, ID:', numericId, 'isBot:', isBot);
 
         var r = await fetch(getAuthUrl('/api/chat/message'), {
             method: 'PUT',
@@ -5171,6 +5232,8 @@ async function saveEdit(btn) {
             editNote.style.cssText = 'font-size:11px; color:#666; margin-left:8px;';
             editNote.textContent = '✎ отредактировано';
             content.appendChild(editNote);
+            
+            console.log('✅ Сообщение успешно отредактировано');
         } else {
             alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
             content.textContent = originalText;
@@ -5229,7 +5292,8 @@ async function sendMessage() {
     if (!chatCharacterId) { alert('Выберите персонажа'); return; }
 
     var msgId = 'msg_' + (++messageIdCounter);
-    addUserMessage(msg, msgId);
+    // Новое сообщение пока без ID в БД
+    addUserMessage(msg, msgId, null);
     input.value = '';
     var div = document.getElementById('chatMessages');
     var typingDiv = document.createElement('div');
@@ -5263,9 +5327,11 @@ async function sendMessage() {
         var d = await r.json();
         var ind = document.getElementById('typingIndicator');
         if (ind) ind.remove();
+        
         if (d.response) {
             var botMsgId = 'msg_' + (++messageIdCounter);
-            addBotMessage(d.response, botMsgId);
+            // Сохраняем ID из ответа сервера
+            addBotMessage(d.response, botMsgId, d.message_id || null);
         } else {
             div.innerHTML += '<div class="msg bot" style="color:#ff4444;">' + (d.error || 'Ошибка') + '</div>';
         }
@@ -7023,38 +7089,6 @@ try:
 except Exception as e:
     print(f"❌ Ошибка создания таблиц: {e}")
     
-@app.put("/api/chat/message")
-async def edit_message(req: EditMessageRequest, token: str):
-    user = get_user_by_token(token)
-    if not user:
-        return JSONResponse({"error": "Не авторизован"}, 401)
-    
-    with SessionLocal() as db:
-        chat_entry = db.query(ChatHistory).filter(
-            ChatHistory.id == req.message_id,
-            ChatHistory.user_id == user.id
-        ).first()
-
-        if not chat_entry:
-            return JSONResponse({"error": "Сообщение не найдено"}, 404)
-
-        if req.is_bot:
-            old_content = chat_entry.bot_response
-            chat_entry.bot_response = req.new_content
-        else:
-            old_content = chat_entry.user_message
-            chat_entry.user_message = req.new_content
-
-        chat_entry.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(chat_entry)
-
-        return {
-            "success": True,
-            "message_id": req.message_id,
-            "new_content": req.new_content,
-            "old_content": old_content
-        }
 
 # ============================================
 # ЗАПУСК СЕРВЕРА
