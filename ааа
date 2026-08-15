@@ -264,6 +264,17 @@ class Room(Base):
     lorebook_id = Column(Integer, nullable=True)
     members = Column(JSON, default=list)
 
+class RoomChatMessage(Base):
+    __tablename__ = "room_chat_messages"
+    id = Column(Integer, primary_key=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    character_id = Column(Integer, ForeignKey("characters.id"), nullable=True)
+    sender_type = Column(String(20), nullable=False)
+    sender_name = Column(String(100), nullable=False)
+    content = Column(Text, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
 class UserMemory(Base):
     __tablename__ = "user_memories"
     id = Column(Integer, primary_key=True)
@@ -1391,6 +1402,111 @@ async def get_room_characters(room_id: int, token: str):
             "avatar": c.avatar,
             "description": c.description
         } for c in chars]
+
+        # ============================================
+# ОБЩИЙ ЧАТ КОМНАТЫ (API)
+# ============================================
+
+@app.post("/api/rooms/{room_id}/chat")
+async def room_chat(room_id: int, message: str, token: str):
+    """Отправить сообщение в общий чат комнаты"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
+        if not room:
+            return JSONResponse({"error": "Комната не найдена"}, 404)
+        
+        characters = db.query(Character).filter(
+            Character.room_id == room_id,
+            Character.user_id == user.id
+        ).limit(100).all()
+        
+        if not characters:
+            return JSONResponse({"error": "В комнате нет персонажей"}, 400)
+        
+        persona = None
+        if user.active_persona_id:
+            persona = db.query(Persona).filter(Persona.id == user.active_persona_id).first()
+        
+        user_msg = RoomChatMessage(
+            room_id=room_id,
+            user_id=user.id,
+            sender_type="user",
+            sender_name=persona.name if persona else user.username,
+            content=message,
+            timestamp=datetime.utcnow()
+        )
+        db.add(user_msg)
+        db.commit()
+        
+        responses = []
+        for character in characters:
+            context = get_room_context(room_id, character.id, limit=20)
+            bot_response = generate_character_response(
+                character=character,
+                user_message=message,
+                persona=persona,
+                context=context,
+                room_context=True
+            )
+            
+            char_msg = RoomChatMessage(
+                room_id=room_id,
+                user_id=user.id,
+                character_id=character.id,
+                sender_type="character",
+                sender_name=character.name,
+                content=bot_response,
+                timestamp=datetime.utcnow()
+            )
+            db.add(char_msg)
+            responses.append({
+                "character_id": character.id,
+                "character_name": character.name,
+                "avatar": character.avatar,
+                "response": bot_response
+            })
+        
+        db.commit()
+        return {"user_message": message, "responses": responses}
+
+
+@app.get("/api/rooms/{room_id}/chat/history")
+async def get_room_chat_history(room_id: int, limit: int = 50, token: str):
+    """Получить историю общего чата комнаты"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
+        if not room:
+            return JSONResponse({"error": "Комната не найдена"}, 404)
+        
+        messages = db.query(RoomChatMessage).filter(
+            RoomChatMessage.room_id == room_id
+        ).order_by(RoomChatMessage.timestamp.desc()).limit(limit).all()
+        messages.reverse()
+        
+        result = []
+        for m in messages:
+            avatar = None
+            if m.character_id:
+                char = db.query(Character).filter(Character.id == m.character_id).first()
+                if char:
+                    avatar = char.avatar
+            result.append({
+                "id": m.id,
+                "sender_type": m.sender_type,
+                "sender_name": m.sender_name,
+                "content": m.content,
+                "timestamp": m.timestamp.strftime("%H:%M"),
+                "avatar": avatar
+            })
+        return result
 
 # API КЛЮЧИ 
 
@@ -3754,27 +3870,64 @@ HTML = r"""<!DOCTYPE html>
         </div>
     </div>
 
-    <!-- ===== КОМНАТЫ ===== -->
-    <div id="page-rooms" class="page">
-        <div class="flex-between">
-            <div><div class="page-title">Комнаты</div><div class="page-desc">Общие пространства</div></div>
-            <button class="btn-primary" onclick="showCreateRoom()">+ Создать</button>
+    <!-- ===== КОМНАТЫ (СПИСОК) ===== -->
+<div id="page-rooms" class="page">
+    <div class="flex-between">
+        <div>
+            <div class="page-title">Комнаты</div>
+            <div class="page-desc">Общие пространства с персонажами и чатом</div>
         </div>
-        <div class="grid" id="roomsGrid"></div>
+        <button class="btn-primary" onclick="showCreateRoom()">+ Создать</button>
+    </div>
+    <div class="grid" id="roomsGrid"></div>
+</div>
+
+<!-- ===== СОЗДАНИЕ КОМНАТЫ ===== -->
+<div id="page-room-create" class="page">
+    <div class="flex-between">
+        <div><div class="page-title">Создать комнату</div><div class="page-desc">Новое общее пространство</div></div>
+        <button class="btn-primary" onclick="showPage('rooms')">Назад</button>
+    </div>
+    <div class="form-box">
+        <input type="text" id="roomName" placeholder="Название комнаты">
+        <textarea id="roomDesc" placeholder="Описание комнаты" style="min-height:80px;"></textarea>
+        <button class="btn" onclick="saveRoom()">Создать комнату</button>
+    </div>
+</div>
+
+<!-- ===== СТРАНИЦА КОМНАТЫ (ОБЩИЙ ЧАТ) ===== -->
+<div id="page-room-view" class="page">
+    <div class="flex-between" style="margin-bottom:16px;">
+        <div>
+            <button onclick="showPage('rooms')" style="background:transparent; border:none; color:#888; font-size:28px; cursor:pointer; padding:0 8px;">←</button>
+            <span class="page-title" id="roomViewTitle">Комната</span>
+            <div class="page-desc" id="roomViewDesc">Загрузка...</div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn-primary" onclick="addCharacterToRoom()" style="padding:6px 16px; font-size:13px;">+ Добавить персонажа</button>
+            <button class="btn-primary" onclick="deleteRoom()" style="padding:6px 16px; font-size:13px; background:rgba(180,40,40,0.3);">🗑️ Удалить</button>
+        </div>
     </div>
 
-    <!-- ===== СОЗДАНИЕ КОМНАТЫ ===== -->
-    <div id="page-room-create" class="page">
-        <div class="flex-between">
-            <div><div class="page-title">Создать комнату</div><div class="page-desc">Новое общее пространство</div></div>
-            <button class="btn-primary" onclick="showPage('rooms')">Назад</button>
+    <!-- Персонажи в комнате -->
+    <div style="margin-bottom:16px;">
+        <div style="color:#888; font-size:13px; margin-bottom:8px;">👥 Персонажи в комнате:</div>
+        <div id="roomCharactersList" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+    </div>
+
+    <!-- ОБЩИЙ ЧАТ КОМНАТЫ -->
+    <div style="background:rgba(255,255,255,0.02); border-radius:14px; border:1px solid rgba(48,76,47,0.1); display:flex; flex-direction:column; height:calc(100vh - 350px); min-height:300px;">
+        <div id="roomChatMessages" style="flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:6px;">
+            <div style="text-align:center; color:#666; padding:30px 0;" id="roomChatPlaceholder">💬 Начните общение в комнате</div>
         </div>
-        <div class="form-box">
-            <input type="text" id="roomName" placeholder="Название">
-            <textarea id="roomDesc" placeholder="Описание"></textarea>
-            <button class="btn" onclick="saveRoom()">Сохранить</button>
+        <div style="display:flex; gap:8px; padding:12px; border-top:1px solid rgba(255,255,255,0.05);">
+            <input type="text" id="roomChatInput" placeholder="Напишите сообщение..." 
+                   style="flex:1; padding:10px 16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:25px; color:#fff; font-size:14px; outline:none;"
+                   onkeypress="if(event.key==='Enter') sendRoomMessage()">
+            <button onclick="sendRoomMessage()" style="padding:10px 24px; background:linear-gradient(45deg,#4a6cf7,#304c2f); border:none; border-radius:25px; color:#fff; font-weight:bold; cursor:pointer;">Отправить</button>
         </div>
     </div>
+</div>
 
     <!-- ===== ЛОРБУК ===== -->
     <div id="page-lore" class="page">
@@ -5901,33 +6054,37 @@ async function deleteChatSession(characterId, characterName) {
 }
 
 // ============================================
-// КОМНАТЫ
+// КОМНАТЫ (ПОЛНАЯ ВЕРСИЯ С ЧАТОМ)
 // ============================================
+
+let currentRoomId = null;
+let roomChatPolling = null;
+
 async function loadRooms() {
     if (!authToken) {
         document.getElementById('roomsGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть комнаты</div>';
         return;
     }
     try {
-        var r = await fetch(getAuthUrl('/api/rooms'));
-        var rooms = await r.json();
-        var grid = document.getElementById('roomsGrid');
+        const r = await fetch(getAuthUrl('/api/rooms'));
+        const rooms = await r.json();
+        const grid = document.getElementById('roomsGrid');
         if (!rooms || !rooms.length) {
-            grid.innerHTML = '<div style="color:#666;text-align:center;padding:40px;">У вас пока нет комнат</div>';
+            grid.innerHTML = '<div style="color:#666;text-align:center;padding:40px;">У вас пока нет комнат<br><span style="font-size:13px;color:#444;">Создайте свою первую комнату!</span></div>';
             return;
         }
-        grid.innerHTML = rooms.map(function(r) {
-            return `
-                <div class="card">
-                    <div class="avatar">⌂</div>
-                    <div class="name">${r.name}</div>
-                    <div class="role">${r.description || 'Без описания'}${r.members ? ' | Участников: '+r.members.length : ''}</div>
-                    <div class="actions">
-                        <button onclick="deleteRoom(${r.id})" class="danger">Удалить</button>
-                    </div>
+        grid.innerHTML = rooms.map(r => `
+            <div class="card" style="cursor:pointer;" onclick="viewRoom(${r.id})">
+                <div class="avatar">⌂</div>
+                <div class="name">${r.name}</div>
+                <div class="role">${r.description || 'Без описания'}</div>
+                <div class="role" style="font-size:11px; color:#555;">${r.members ? '👥 '+r.members.length : '👤 1'}</div>
+                <div class="actions">
+                    <button onclick="event.stopPropagation(); viewRoom(${r.id})" style="background:rgba(48,76,47,0.3);">💬 Войти</button>
+                    <button onclick="event.stopPropagation(); deleteRoom(${r.id})" class="danger">🗑️</button>
                 </div>
-            `;
-        }).join('');
+            </div>
+        `).join('');
     } catch(e) { console.error(e); }
 }
 
@@ -5939,29 +6096,271 @@ function showCreateRoom() {
 
 async function saveRoom() {
     if (!authToken) { alert('Войдите чтобы создать комнату'); return; }
-    var data = {
+    const data = {
         name: document.getElementById('roomName').value.trim(),
         description: document.getElementById('roomDesc').value.trim() || null
     };
     if (!data.name) { alert('Введите название'); return; }
     try {
-        var r = await fetch(getAuthUrl('/api/rooms'), {
+        const r = await fetch(getAuthUrl('/api/rooms'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        var d = await r.json();
-        if (d.success) { alert('Комната создана!'); showPage('rooms'); }
-        else alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
+        const d = await r.json();
+        if (d.success) { 
+            alert('✅ Комната создана!');
+            showPage('rooms');
+            loadRooms();
+        } else {
+            alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
+        }
     } catch(e) { alert('Ошибка: ' + e.message); }
 }
 
 async function deleteRoom(id) {
-    if (!confirm('Удалить комнату?')) return;
+    if (!confirm('🗑️ Удалить комнату?')) return;
     try {
-        await fetch(getAuthUrl('/api/rooms/' + id), { method: 'DELETE' });
-        loadRooms();
+        const r = await fetch(getAuthUrl('/api/rooms/' + id), { method: 'DELETE' });
+        const data = await r.json();
+        if (data.success) {
+            loadRooms();
+            if (currentRoomId === id) {
+                currentRoomId = null;
+                showPage('rooms');
+            }
+        }
     } catch(e) { alert('Ошибка удаления'); }
+}
+
+// ============================================
+// СТРАНИЦА КОМНАТЫ
+// ============================================
+
+async function viewRoom(roomId) {
+    currentRoomId = roomId;
+    showPage('room-view');
+    document.getElementById('roomChatMessages').innerHTML = '<div style="text-align:center; color:#666; padding:30px 0;">⏳ Загрузка...</div>';
+    
+    try {
+        // Загружаем информацию о комнате
+        const r = await fetch(getAuthUrl('/api/rooms'));
+        const rooms = await r.json();
+        const room = rooms.find(r => r.id === roomId);
+        
+        if (room) {
+            document.getElementById('roomViewTitle').textContent = room.name || 'Комната';
+            document.getElementById('roomViewDesc').textContent = room.description || 'Без описания';
+        }
+        
+        // Загружаем персонажей комнаты
+        await loadRoomCharacters(roomId);
+        
+        // Загружаем историю чата
+        await loadRoomChatHistory(roomId);
+        
+        // Начинаем polling для новых сообщений
+        startRoomChatPolling(roomId);
+        
+    } catch(e) {
+        console.error('Ошибка загрузки комнаты:', e);
+        document.getElementById('roomChatMessages').innerHTML = '<div style="text-align:center; color:#ff4444; padding:30px 0;">❌ Ошибка загрузки</div>';
+    }
+}
+
+async function loadRoomCharacters(roomId) {
+    try {
+        const r = await fetch(getAuthUrl('/api/rooms/' + roomId + '/characters'));
+        const chars = await r.json();
+        const container = document.getElementById('roomCharactersList');
+        
+        if (!chars || !chars.length) {
+            container.innerHTML = '<span style="color:#666; font-size:13px;">Нет персонажей в комнате</span>';
+            return;
+        }
+        
+        container.innerHTML = chars.map(c => `
+            <div style="display:flex; align-items:center; gap:6px; background:rgba(255,255,255,0.04); padding:4px 12px 4px 6px; border-radius:20px; border:1px solid rgba(255,255,255,0.05);">
+                <div style="width:24px; height:24px; border-radius:50%; overflow:hidden; background:rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:center; font-size:12px;">
+                    ${c.avatar ? '<img src="'+c.avatar+'" style="width:100%;height:100%;object-fit:cover;">' : '✦'}
+                </div>
+                <span style="font-size:13px; color:#ddd;">${c.name}</span>
+                <button onclick="removeCharacterFromRoom(${c.id})" style="background:transparent; border:none; color:#666; cursor:pointer; font-size:12px;">✕</button>
+            </div>
+        `).join('');
+    } catch(e) {
+        console.error('Ошибка загрузки персонажей:', e);
+    }
+}
+
+// ============================================
+// ЧАТ КОМНАТЫ
+// ============================================
+
+async function loadRoomChatHistory(roomId, limit = 50) {
+    try {
+        const r = await fetch(getAuthUrl('/api/rooms/' + roomId + '/chat/history?limit=' + limit));
+        const messages = await r.json();
+        const container = document.getElementById('roomChatMessages');
+        
+        if (!messages || !messages.length) {
+            container.innerHTML = '<div style="text-align:center; color:#666; padding:30px 0;">💬 Начните общение в комнате</div>';
+            return;
+        }
+        
+        container.innerHTML = messages.map(m => {
+            const isUser = m.sender_type === 'user';
+            const avatarHtml = m.avatar ? `<img src="${m.avatar}" style="width:100%;height:100%;object-fit:cover;">` : (isUser ? '◌' : '✦');
+            return `
+                <div style="display:flex; align-items:flex-start; gap:8px; ${isUser ? 'justify-content:flex-end;' : ''}">
+                    <div style="width:28px; height:28px; border-radius:50%; overflow:hidden; background:rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; ${isUser ? 'order:2;' : ''}">
+                        ${avatarHtml}
+                    </div>
+                    <div style="max-width:70%; ${isUser ? 'background:rgba(74,108,247,0.2); border:1px solid rgba(74,108,247,0.2);' : 'background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.05);'} border-radius:12px; padding:8px 14px; ${isUser ? 'border-bottom-right-radius:4px;' : 'border-bottom-left-radius:4px;'}">
+                        <div style="font-size:11px; color:#888; margin-bottom:2px;">${m.sender_name}</div>
+                        <div style="font-size:14px; color:#e0e0e0;">${m.content}</div>
+                        <div style="font-size:10px; color:#555; text-align:right; margin-top:2px;">${m.timestamp || ''}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        container.scrollTop = container.scrollHeight;
+    } catch(e) {
+        console.error('Ошибка загрузки истории чата:', e);
+    }
+}
+
+async function sendRoomMessage() {
+    if (!currentRoomId) {
+        alert('Комната не выбрана');
+        return;
+    }
+    
+    const input = document.getElementById('roomChatInput');
+    const message = input.value.trim();
+    if (!message) return;
+    
+    input.value = '';
+    input.disabled = true;
+    
+    try {
+        const r = await fetch(getAuthUrl('/api/rooms/' + currentRoomId + '/chat'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: message })
+        });
+        const data = await r.json();
+        
+        if (data.user_message) {
+            await loadRoomChatHistory(currentRoomId);
+        } else if (data.error) {
+            alert('Ошибка: ' + data.error);
+        }
+    } catch(e) {
+        console.error('Ошибка отправки:', e);
+        alert('Ошибка отправки сообщения');
+    } finally {
+        input.disabled = false;
+        input.focus();
+    }
+}
+
+function startRoomChatPolling(roomId) {
+    // Останавливаем предыдущий polling
+    if (roomChatPolling) {
+        clearInterval(roomChatPolling);
+        roomChatPolling = null;
+    }
+    
+    // Обновляем чат каждые 5 секунд
+    roomChatPolling = setInterval(() => {
+        if (currentRoomId === roomId) {
+            loadRoomChatHistory(roomId);
+        } else {
+            clearInterval(roomChatPolling);
+            roomChatPolling = null;
+        }
+    }, 5000);
+}
+
+// ============================================
+// УПРАВЛЕНИЕ ПЕРСОНАЖАМИ В КОМНАТЕ
+// ============================================
+
+async function addCharacterToRoom() {
+    if (!currentRoomId) {
+        alert('Комната не выбрана');
+        return;
+    }
+    
+    try {
+        // Получаем всех персонажей пользователя
+        const r = await fetch(getAuthUrl('/api/characters'));
+        const allChars = await r.json();
+        
+        // Получаем персонажей уже в комнате
+        const roomR = await fetch(getAuthUrl('/api/rooms/' + currentRoomId + '/characters'));
+        const roomChars = await roomR.json();
+        const roomCharIds = roomChars.map(c => c.id);
+        
+        // Доступные для добавления
+        const available = allChars.filter(c => !roomCharIds.includes(c.id));
+        
+        if (!available.length) {
+            alert('Нет свободных персонажей для добавления');
+            return;
+        }
+        
+        // Создаём простой диалог выбора
+        const charList = available.map((c, i) => 
+            `${i+1}. ${c.name} (${c.role || 'Без роли'})`
+        ).join('\n');
+        
+        const choice = prompt('Выберите персонажа:\n\n' + charList + '\n\nВведите номер:');
+        if (!choice) return;
+        
+        const index = parseInt(choice) - 1;
+        if (isNaN(index) || index < 0 || index >= available.length) {
+            alert('Неверный номер');
+            return;
+        }
+        
+        const charId = available[index].id;
+        
+        // Добавляем персонажа в комнату
+        const addR = await fetch(getAuthUrl('/api/rooms/' + currentRoomId + '/characters'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ character_id: charId })
+        });
+        const data = await addR.json();
+        
+        if (data.success) {
+            alert('✅ Персонаж добавлен в комнату!');
+            await loadRoomCharacters(currentRoomId);
+        } else {
+            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
+
+async function removeCharacterFromRoom(characterId) {
+    if (!confirm('Удалить персонажа из комнаты?')) return;
+    
+    try {
+        const r = await fetch(getAuthUrl('/api/rooms/' + currentRoomId + '/characters/' + characterId), {
+            method: 'DELETE'
+        });
+        const data = await r.json();
+        if (data.success) {
+            await loadRoomCharacters(currentRoomId);
+        }
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
+    }
 }
 
 // ============================================
@@ -7291,6 +7690,88 @@ def is_empty_response(text: str) -> bool:
         return True
     
     return False
+    
+    # ============================================
+# ФУНКЦИИ ДЛЯ ОБЩЕГО ЧАТА КОМНАТЫ
+# ============================================
+
+def generate_character_response(character, user_message, persona, context, room_context=False):
+    """Генерирует ответ персонажа в контексте комнаты"""
+    
+    system_prompt = f"""Ты — {character.name}."""
+    if character.role:
+        system_prompt += f"\nТвоя роль: {character.role}"
+    if character.personality:
+        system_prompt += f"\nТвой характер: {character.personality}"
+    if character.backstory:
+        system_prompt += f"\nТвоя предыстория: {character.backstory}"
+    
+    if room_context:
+        system_prompt += """
+        
+Ты находишься в общем чате комнаты. Здесь несколько персонажей общаются одновременно.
+
+ПРАВИЛА ОБЩЕГО ЧАТА:
+1. Отвечай кратко и по существу (2-3 предложения максимум)
+2. Учитывай, что другие персонажи тоже могут говорить
+3. Реагируй на сообщение пользователя, но не перебивай других
+4. Сохраняй свой характер
+5. Не используй звёздочки для описания действий
+
+Формат ответа: просто текст, без звёздочек и кавычек."""
+    
+    if context and context.get('recent_messages'):
+        system_prompt += "\n\nНедавние сообщения в чате:\n"
+        for msg in context['recent_messages'][-5:]:
+            system_prompt += f"{msg['sender']}: {msg['content']}\n"
+    
+    if persona:
+        system_prompt += f"\n\nТы общаешься с {persona.name}."
+        if persona.personality:
+            system_prompt += f"\nХарактер собеседника: {persona.personality}"
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message}
+    ]
+    
+    openai.api_key = POLZA_API_KEY
+    openai.base_url = "https://polza.ai/api/v1/"
+    
+    try:
+        response = openai.chat.completions.create(
+            model=POLZA_MODEL,
+            messages=messages,
+            temperature=0.8,
+            max_tokens=300
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"*{character.name} задумчиво молчит.*"
+
+
+def get_room_context(room_id: int, character_id: int, limit: int = 20):
+    """Получить контекст для персонажа в общем чате"""
+    with SessionLocal() as db:
+        recent_messages = db.query(RoomChatMessage).filter(
+            RoomChatMessage.room_id == room_id
+        ).order_by(RoomChatMessage.timestamp.desc()).limit(limit).all()
+        recent_messages.reverse()
+        
+        lore = db.query(LoreEntry).filter(
+            LoreEntry.room_id == room_id
+        ).order_by(LoreEntry.importance.desc()).limit(10).all()
+        
+        characters = db.query(Character).filter(
+            Character.room_id == room_id
+        ).limit(10).all()
+        
+        context = {
+            "recent_messages": [{"sender": m.sender_name, "content": m.content} for m in recent_messages],
+            "lore": [{"title": l.title, "content": l.content[:200]} for l in lore],
+            "characters": [{"name": c.name, "role": c.role} for c in characters if c.id != character_id]
+        }
+        return context
 
 if __name__ == "__main__":
     import uvicorn
