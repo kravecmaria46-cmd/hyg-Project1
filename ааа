@@ -4277,7 +4277,6 @@ function showPage(id) {
     if (id === 'memory') { loadMemory(); loadMemoryCharacters(); }
     if (id === 'lore') { loadLore(); loadLoreSelects(); }
     if (id === 'rooms') loadRooms();
-    if (id === 'home') loadPopular();
     if (id === 'chats') loadChats();
 
     // ========== УПРАВЛЕНИЕ ИСТОРИЕЙ ==========
@@ -6210,9 +6209,6 @@ async function updateLore() {
         alert('Ошибка: ' + e.message);
     }
 }
-// ============================================
-// ПОПУЛЯРНЫЕ (ГЛАВНАЯ)
-// ============================================
 
 // ============================================
 // ОЧИСТКА ЧАТА (НАЧАТЬ ЗАНОВО)
