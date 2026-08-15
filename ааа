@@ -1404,7 +1404,7 @@ async def get_room_characters(room_id: int, token: str):
             "description": c.description
         } for c in chars]
 
-# ===== ЭТОТ ЭНДПОИНТ ДОЛЖЕН БЫТЬ НА ОДНОМ УРОВНЕ С GET =====
+# ===== ЗДЕСЬ ДОЛЖЕН БЫТЬ POST ЭНДПОИНТ (НА ОДНОМ УРОВНЕ) =====
 @app.post("/api/rooms/{room_id}/characters")
 async def add_room_character(room_id: int, character_id: int, token: str):
     """Добавить персонажа в комнату"""
@@ -1433,6 +1433,7 @@ async def add_room_character(room_id: int, character_id: int, token: str):
         db.commit()
         
         return {"success": True}
+
 
         # ============================================
 # ОБЩИЙ ЧАТ КОМНАТЫ (API)
