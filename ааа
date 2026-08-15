@@ -167,7 +167,8 @@ class Character(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user_id = Column(Integer, ForeignKey("users.id"))
     world_id = Column(Integer, nullable=True)
-    key_traits = Column(Text, nullable=True)  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
+    key_traits = Column(Text, nullable=True)  
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
 
 class World(Base):
     __tablename__ = "worlds"
@@ -331,17 +332,21 @@ LORE_CATEGORIES = {
     "general": "📝 Общее"
 }
 
-# ============================================
-# СОЗДАНИЕ БАЗЫ (С МИГРАЦИЕЙ)
-# ============================================
+# БД с миграцией 
 
 try:
     with engine.connect() as conn:
-        # Проверяем тип БД
+        # Проверка тип БД
         if DATABASE_URL.startswith("sqlite"):
-            # Для SQLite - просто пытаемся добавить колонки
+            # room_id для characters
+            try:
+                conn.execute("ALTER TABLE characters ADD COLUMN room_id INTEGER REFERENCES rooms(id)")
+                conn.commit()
+                print("✅ Колонка room_id добавлена в SQLite")
+            except Exception as e:
+                print(f"ℹ️ Колонка room_id уже существует или ошибка: {e}")
             
-            # Колонка world_id для memory_hierarchy
+            # world_id для memory_hierarchy
             try:
                 conn.execute("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER")
                 conn.commit()
@@ -349,19 +354,18 @@ try:
             except Exception as e:
                 print(f"ℹ️ Колонка world_id уже существует или ошибка: {e}")
             
-            # ===== ДОБАВЛЯЕМ key_traits ДЛЯ characters =====
+            # key_traits для characters
             try:
                 conn.execute("ALTER TABLE characters ADD COLUMN key_traits TEXT")
                 conn.commit()
                 print("✅ Колонка key_traits добавлена в SQLite")
             except Exception as e:
                 print(f"ℹ️ Колонка key_traits уже существует или ошибка: {e}")
-            # ===============================================
             
         else:
             # Для PostgreSQL/MySQL с внешним ключом
             
-            # Колонка world_id для memory_hierarchy
+            # world_id для memory_hierarchy
             try:
                 conn.execute("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER REFERENCES worlds(id)")
                 conn.commit()
@@ -369,14 +373,21 @@ try:
             except Exception as e:
                 print(f"ℹ️ Колонка world_id уже существует или ошибка: {e}")
             
-            # ===== ДОБАВЛЯЕМ key_traits ДЛЯ characters =====
+            # key_traits для characters
             try:
                 conn.execute("ALTER TABLE characters ADD COLUMN key_traits TEXT")
                 conn.commit()
                 print("✅ Колонка key_traits добавлена")
             except Exception as e:
                 print(f"ℹ️ Колонка key_traits уже существует или ошибка: {e}")
-            # ===============================================
+            
+            # room_id для characters 
+            try:
+                conn.execute("ALTER TABLE characters ADD COLUMN room_id INTEGER REFERENCES rooms(id)")
+                conn.commit()
+                print("✅ Колонка room_id добавлена")
+            except Exception as e:
+                print(f"ℹ️ Колонка room_id уже существует или ошибка: {e}")
     
     # Создаем остальные таблицы (если их нет)
     Base.metadata.create_all(bind=engine)
@@ -384,9 +395,23 @@ try:
     
 except Exception as e:
     print(f"❌ Ошибка: {e}")
-# ============================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СЕССИЙ (FIXED)
-# ============================================
+            
+            # ДОБАВИЛА key_traits ДЛЯ characters
+            try:
+                conn.execute("ALTER TABLE characters ADD COLUMN key_traits TEXT")
+                conn.commit()
+                print("✅ Колонка key_traits добавлена")
+            except Exception as e:
+                print(f"ℹ️ Колонка key_traits уже существует или ошибка: {e}")
+                
+    # остальные таблицы 
+    Base.metadata.create_all(bind=engine)
+    print("✅ База данных подключена")
+    
+except Exception as e:
+    print(f"❌ Ошибка: {e}")
+
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СЕССИЙ 
 
 def create_session(user_id: int) -> str:
     """Создает новую сессию для пользователя"""
@@ -394,7 +419,7 @@ def create_session(user_id: int) -> str:
     expires_at = datetime.utcnow() + timedelta(days=7)
     
     with SessionLocal() as db:
-        # Удаляем старые сессии этого пользователя
+        # УдалИ старые сессии этого пользователя
         db.query(Session).filter(Session.user_id == user_id).delete()
         
         session = Session(
@@ -405,7 +430,7 @@ def create_session(user_id: int) -> str:
         db.add(session)
         db.commit()
     
-    return token  # <-- ✅ Сессия уже закрыта!
+    return token  
 
 def get_user_by_token(token: str) -> Optional[User]:
     """Получает пользователя по токену сессии"""
@@ -444,8 +469,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- PYDANTIC МОДЕЛИ ---
-
+# питон модели 
 class RegisterRequest(BaseModel):
     username: str
     password: str
@@ -465,7 +489,8 @@ class CharacterCreate(BaseModel):
     avatar: Optional[str] = None
     is_public: Optional[bool] = False
     world_id: Optional[int] = None
-    key_traits: Optional[str] = None  # <-- ДОБАВИТЬ
+    key_traits: Optional[str] = None  
+    room_id: Optional[int] = None
 
 class WorldCreate(BaseModel):
     name: str
@@ -552,7 +577,7 @@ class RegenerateRequest(BaseModel):
 async def upload_file(file: UploadFile = File(...)):
     try:
         ext = file.filename.split(".")[-1] if "." in file.filename else "png"
-        # Генерируем уникальное имя
+        # это имя 
         filename = f"{datetime.utcnow().timestamp()}.{ext}"
         filepath = os.path.join("uploads", filename)
         
@@ -563,12 +588,10 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         return JSONResponse({"error": f"Ошибка загрузки: {str(e)}"}, 500)
 
-# ============================================
+
 # API ЭНДПОИНТЫ
-# ============================================
 
-# --- РЕДАКТИРОВАНИЕ СООБЩЕНИЯ (ДОБАВИТЬ СЮДА!) ---
-
+# РЕДАКТИРОВАНИЕ СООБЩЕНИЯ 
 @app.put("/api/chat/message")
 async def edit_message(req: EditMessageRequest, token: str):
     user = get_user_by_token(token)
@@ -602,7 +625,7 @@ async def edit_message(req: EditMessageRequest, token: str):
             "old_content": old_content
         }
 
-# --- АВТОРИЗАЦИЯ ---
+# АВТОРИЗАЦИЯ 
 
 @app.post("/api/register")
 async def register(req: RegisterRequest):
@@ -628,7 +651,7 @@ async def register(req: RegisterRequest):
         user.active_persona_id = persona.id
         db.commit()
     
-    # Создаем сессию (отдельно, с своей сессией)
+    # Создание сессии (отдельно, с своей сессией)
     token = create_session(user_id)
     
     return {
@@ -664,7 +687,7 @@ async def logout(token: str):
     delete_session(token)
     return {"success": True}
 
-# --- ПЕРСОНАЖИ ---
+#  ПЕРСОНАЖИ 
 
 @app.get("/api/characters")
 async def get_characters(token: str):
@@ -776,7 +799,7 @@ async def generate_character(req: GenerateRequest, token: str):
     openai.api_key = api_key
     openai.base_url = "https://polza.ai/api/v1/"
     
-    # Определяем, короткий это запрос или длинный
+    # короткий или длинный
     is_short = len(req.prompt.split()) < 10
     
     if is_short:
@@ -1112,7 +1135,6 @@ async def create_lore(lore: LoreCreate, token: str):
         return JSONResponse({"error": "Не авторизован"}, 401)
     
     with SessionLocal() as db:
-        # ПРОБЛЕМА: lore.dict() не включает related_entities?
         new_lore = LoreEntry(**lore.dict(), user_id=user.id)
         db.add(new_lore)
         db.commit()
@@ -1266,9 +1288,8 @@ async def get_lore_timeline(world_id: int, token: str):
             "content": e.content,
             "importance": e.importance
         } for e in events]
-# --- КОМНАТЫ ---
 
-# --- КОМНАТЫ ---
+#  КОМНАТЫ 
 
 @app.get("/api/rooms")
 async def get_rooms(token: str):
@@ -1363,8 +1384,32 @@ async def remove_room_member(room_id: int, member_id: int, token: str):
             room.members = members
             db.commit()
         return {"success": True}
+    
+@app.get("/api/rooms/{room_id}/characters")
+async def get_room_characters(room_id: int, token: str):
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
+        if not room:
+            return JSONResponse({"error": "Комната не найдена"}, 404)
+        
+        chars = db.query(Character).filter(
+            Character.room_id == room_id,
+            Character.user_id == user.id
+        ).all()
+        
+        return [{
+            "id": c.id,
+            "name": c.name,
+            "role": c.role,
+            "avatar": c.avatar,
+            "description": c.description
+        } for c in chars]
 
-# --- API КЛЮЧИ ---
+# API КЛЮЧИ 
 
 @app.get("/api/keys")
 async def get_api_keys(token: str):
@@ -1387,7 +1432,7 @@ async def update_api_keys(keys_data: ApiKeysUpdate, token: str):
         db.commit()
         return {"success": True}
 
-# --- ПРОФИЛЬ ---
+#  ПРОФИЛЬ 
 
 @app.get("/api/profile")
 async def get_profile(token: str):
@@ -1426,7 +1471,7 @@ async def update_profile(
         db.commit()
         return {"success": True}
         
-        # --- УДАЛЕНИЕ АККАУНТА ---
+        # УДАЛЕНИЕ АККАУНТА
 
 @app.delete("/api/account")
 async def delete_account(token: str):
@@ -3494,6 +3539,10 @@ HTML = r"""<!DOCTYPE html>
             <select id="charWorld" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
                 <option value="">Без мира</option>
             </select>
+            <select id="charRoom" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+    <option value="">Без комнаты</option>
+</select>
+
             <label class="checkbox-label"><input type="checkbox" id="charPublic"> Публичный</label>
             <div style="margin: 8px 0;">
                 <label style="color:#aaa; font-size:13px; display:block; margin-bottom:6px;">✨ Быстрая генерация персонажа</label>
@@ -3553,6 +3602,7 @@ HTML = r"""<!DOCTYPE html>
             <select id="editCharWorld" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
                 <option value="">Без мира</option>
             </select>
+            
             <label class="checkbox-label"><input type="checkbox" id="editCharPublic"> Публичный</label>
             <div style="display:flex; gap:10px; margin:8px 0;">
                 <input type="text" id="editGeneratePrompt"
@@ -4115,9 +4165,8 @@ let editingLoreId = null;
 let _personaModalCallback = null;
 let _pendingChatCharId = null;
 
-// ============================================
-// ЗАСТАВКА
-// ============================================
+// Функция заставки 
+
 function handleCoverClick() {
     console.log('Клик по заставке!');
     var cover = document.getElementById('cover');
@@ -4135,9 +4184,9 @@ function handleCoverClick() {
     }
 }
 
-// ============================================
-// ЗАГРУЗКА СОСТОЯНИЯ
-// ============================================
+
+// Функция загрузки 
+
 const saved = localStorage.getItem('hyg_user');
 if (saved) {
     try {
@@ -4690,6 +4739,7 @@ function showCreateCharacter() {
     document.getElementById('charPublic').checked = false;
     document.getElementById('charAvatarLabel').textContent = 'Или загрузить изображение';
     loadWorldsSelect('charWorld');
+    loadRoomsSelect('charRoom');
     showPage('character-create');
 }
 
@@ -4697,6 +4747,8 @@ function showEditCharacter(charId) {
     editingCharacterId = charId;
     showPage('character-edit');
     loadWorldsSelect('editCharWorld');
+    loadRoomsSelect('editCharRoom');  // <-- ДОБАВЛЕНО
+    
     fetch(getAuthUrl('/api/characters/' + charId))
         .then(function(r) { return r.json(); })
         .then(function(char) {
@@ -4711,14 +4763,15 @@ function showEditCharacter(charId) {
             document.getElementById('editCharPersonality').value = char.personality || '';
             document.getElementById('editCharBackstory').value = char.backstory || '';
             document.getElementById('editCharGreeting').value = char.greeting || '';
-            // ===== ДОБАВЬ ЭТУ СТРОКУ =====
             document.getElementById('editCharKeyTraits').value = char.key_traits || '';
-            // =============================
             document.getElementById('editCharAvatar').value = char.avatar || '';
             document.getElementById('editCharPublic').checked = char.is_public || false;
             document.getElementById('editCharAvatarLabel').textContent = char.avatar ? '✓ Загружено' : 'Или загрузить изображение';
             if (char.world_id) {
                 document.getElementById('editCharWorld').value = char.world_id;
+            }
+            if (char.room_id) {  // <-- ДОБАВЛЕНО
+                document.getElementById('editCharRoom').value = char.room_id;
             }
         })
         .catch(function(e) {
@@ -4726,22 +4779,22 @@ function showEditCharacter(charId) {
             showPage('characters');
         });
 }
-
 async function updateCharacter() {
     if (!authToken) { alert('Войдите чтобы редактировать персонажа'); return; }
     if (!editingCharacterId) { alert('Персонаж не выбран'); return; }
     const data = {
-    name: document.getElementById('editCharName').value.trim(),
-    role: document.getElementById('editCharRole').value.trim() || null,
-    description: document.getElementById('editCharDesc').value.trim() || null,
-    personality: document.getElementById('editCharPersonality').value.trim() || null,
-    backstory: document.getElementById('editCharBackstory').value.trim() || null,
-    greeting: document.getElementById('editCharGreeting').value.trim() || null,
-    key_traits: document.getElementById('editCharKeyTraits').value.trim() || null,  // <-- ДОБАВИТЬ
-    avatar: document.getElementById('editCharAvatar').value.trim() || null,
-    is_public: document.getElementById('editCharPublic').checked,
-    world_id: parseInt(document.getElementById('editCharWorld').value) || null
-};
+        name: document.getElementById('editCharName').value.trim(),
+        role: document.getElementById('editCharRole').value.trim() || null,
+        description: document.getElementById('editCharDesc').value.trim() || null,
+        personality: document.getElementById('editCharPersonality').value.trim() || null,
+        backstory: document.getElementById('editCharBackstory').value.trim() || null,
+        greeting: document.getElementById('editCharGreeting').value.trim() || null,
+        key_traits: document.getElementById('editCharKeyTraits').value.trim() || null,
+        avatar: document.getElementById('editCharAvatar').value.trim() || null,
+        is_public: document.getElementById('editCharPublic').checked,
+        world_id: parseInt(document.getElementById('editCharWorld').value) || null,
+        room_id: parseInt(document.getElementById('editCharRoom').value) || null  // <-- ДОБАВЛЕНО
+    };
     if (!data.name) { alert('Введите имя'); return; }
     try {
         const r = await fetch(getAuthUrl('/api/characters/' + editingCharacterId), {
@@ -4764,17 +4817,18 @@ async function updateCharacter() {
 async function saveCharacter() {
     if (!authToken) { alert('Войдите чтобы создать персонажа'); return; }
     const data = {
-    name: document.getElementById('charName').value.trim(),
-    role: document.getElementById('charRole').value.trim() || null,
-    description: document.getElementById('charDesc').value.trim() || null,
-    personality: document.getElementById('charPersonality').value.trim() || null,
-    backstory: document.getElementById('charBackstory').value.trim() || null,
-    greeting: document.getElementById('charGreeting').value.trim() || null,
-    key_traits: document.getElementById('charKeyTraits').value.trim() || null,  // <-- ДОБАВИТЬ
-    avatar: document.getElementById('charAvatar').value.trim() || null,
-    is_public: document.getElementById('charPublic').checked,
-    world_id: parseInt(document.getElementById('charWorld').value) || null
-};
+        name: document.getElementById('charName').value.trim(),
+        role: document.getElementById('charRole').value.trim() || null,
+        description: document.getElementById('charDesc').value.trim() || null,
+        personality: document.getElementById('charPersonality').value.trim() || null,
+        backstory: document.getElementById('charBackstory').value.trim() || null,
+        greeting: document.getElementById('charGreeting').value.trim() || null,
+        key_traits: document.getElementById('charKeyTraits').value.trim() || null,
+        avatar: document.getElementById('charAvatar').value.trim() || null,
+        is_public: document.getElementById('charPublic').checked,
+        world_id: parseInt(document.getElementById('charWorld').value) || null,
+        room_id: parseInt(document.getElementById('charRoom').value) || null  // <-- ДОБАВЛЕНО
+    };
     if (!data.name) { alert('Введите имя'); return; }
     try {
         const r = await fetch(getAuthUrl('/api/characters'), {
@@ -4787,7 +4841,6 @@ async function saveCharacter() {
         else alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
     } catch(e) { alert('Ошибка: ' + e.message); }
 }
-
 async function deleteCharacter(id) {
     if (!confirm('Удалить персонажа?')) return;
     try {
@@ -4818,6 +4871,22 @@ async function loadWorldsSelect(selectId) {
         });
     } catch(e) {
         console.error('Ошибка загрузки миров:', e);
+    }
+}
+
+async function loadRoomsSelect(selectId) {
+    if (!authToken) return;
+    try {
+        const r = await fetch(getAuthUrl('/api/rooms'));
+        const rooms = await r.json();
+        const sel = document.getElementById(selectId);
+        if (!sel) return;
+        sel.innerHTML = '<option value="">Без комнаты</option>';
+        rooms.forEach(r => {
+            sel.innerHTML += '<option value="' + r.id + '">' + r.name + '</option>';
+        });
+    } catch(e) {
+        console.error('Ошибка загрузки комнат:', e);
     }
 }
 
