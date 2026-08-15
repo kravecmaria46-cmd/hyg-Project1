@@ -786,7 +786,7 @@ async def delete_character(char_id: int, token: str):
         db.delete(char)
         db.commit()
         return {"success": True}
-        
+
         # --- СВЯЗИ МЕЖДУ ПЕРСОНАЖАМИ ---
 
 @app.get("/api/characters/{character_id}/relationships")
@@ -3934,6 +3934,16 @@ HTML = r"""<!DOCTYPE html>
         <button class="btn" onclick="updateCharacter()">Сохранить изменения</button>
     </div>
 </div>
+<!-- ===== СВЯЗИ ПЕРСОНАЖА ===== -->
+<div id="page-character-relationships" style="margin-top:20px; display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="color:#aaa; font-weight:400; font-size:16px;">🔗 Связи с другими персонажами</h3>
+        <button class="btn-primary" onclick="openAddRelationship()" style="padding:4px 16px; font-size:13px;">+ Добавить</button>
+    </div>
+    <div id="relationshipsGrid" style="display:flex; flex-direction:column; gap:8px;">
+        <div style="color:#666; text-align:center; padding:20px;">Нет связей</div>
+    </div>
+</div>
 
     <!-- ===== МИРЫ (СОЗДАТЕЛЬ) ===== -->
     <div id="page-worlds" class="page">
@@ -5103,7 +5113,10 @@ function showEditCharacter(charId) {
     editingCharacterId = charId;
     showPage('character-edit');
     loadWorldsSelect('editCharWorld');
-    loadRoomsSelect('editCharRoom');  // <-- ДОБАВЛЕНО
+    loadRoomsSelect('editCharRoom');
+    
+    // Скрываем блок связей до загрузки
+    document.getElementById('page-character-relationships').style.display = 'none';
     
     fetch(getAuthUrl('/api/characters/' + charId))
         .then(function(r) { return r.json(); })
@@ -5126,9 +5139,12 @@ function showEditCharacter(charId) {
             if (char.world_id) {
                 document.getElementById('editCharWorld').value = char.world_id;
             }
-            if (char.room_id) {  // <-- ДОБАВЛЕНО
+            if (char.room_id) {
                 document.getElementById('editCharRoom').value = char.room_id;
             }
+            
+            // ===== ЗАГРУЗКА СВЯЗЕЙ =====
+            loadRelationships(charId);
         })
         .catch(function(e) {
             alert('Ошибка загрузки персонажа: ' + e.message);
@@ -7621,6 +7637,237 @@ function hideLoading() {
     const overlay = document.getElementById('loadingOverlay');
     if (overlay) {
         overlay.style.display = 'none';
+    }
+}
+
+// ============================================
+// СВЯЗИ МЕЖДУ ПЕРСОНАЖАМИ
+// ============================================
+
+let currentCharacterRelationships = [];
+
+async function loadRelationships(characterId) {
+    if (!authToken) return;
+    
+    try {
+        const r = await fetch(getAuthUrl('/api/characters/' + characterId + '/relationships'));
+        const relationships = await r.json();
+        currentCharacterRelationships = relationships;
+        
+        const container = document.getElementById('relationshipsGrid');
+        const block = document.getElementById('page-character-relationships');
+        
+        if (!relationships || !relationships.length) {
+            container.innerHTML = '<div style="color:#666; text-align:center; padding:12px;">🔗 Нет связей</div>';
+            block.style.display = 'block';
+            return;
+        }
+        
+        // Загружаем типы связей
+        const typesR = await fetch('/api/characters/relationship-types');
+        const typesData = await typesR.json();
+        const typeMap = {};
+        typesData.types.forEach(t => {
+            typeMap[t.value] = t.label;
+        });
+        
+        block.style.display = 'block';
+        
+        container.innerHTML = relationships.map(rel => {
+            const label = typeMap[rel.relationship_type] || rel.relationship_type;
+            
+            return `
+                <div style="display:flex; align-items:center; gap:12px; 
+                            background:rgba(255,255,255,0.03); 
+                            border:1px solid rgba(255,255,255,0.05); 
+                            border-radius:10px; padding:10px 14px;">
+                    <div style="width:40px; height:40px; border-radius:50%; 
+                                overflow:hidden; background:rgba(255,255,255,0.05); 
+                                display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0;">
+                        ${rel.related_character_avatar ? 
+                            `<img src="${rel.related_character_avatar}" style="width:100%;height:100%;object-fit:cover;">` : 
+                            '✦'}
+                    </div>
+                    <div style="flex:1;">
+                        <div style="font-size:15px; font-weight:500; color:#fff;">
+                            ${rel.related_character_name || 'Unknown'}
+                        </div>
+                        <div style="font-size:13px; color:#888;">
+                            ${label}
+                            ${rel.description ? ' | ' + rel.description : ''}
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                            <span style="font-size:11px; color:#666;">Сила:</span>
+                            <div style="flex:1; max-width:100px; height:4px; background:rgba(255,255,255,0.05); border-radius:4px; overflow:hidden;">
+                                <div style="width:${(rel.strength || 5) * 10}%; height:100%; background:linear-gradient(90deg,#304c2f,#4a6cf7); border-radius:4px;"></div>
+                            </div>
+                            <span style="font-size:11px; color:#666;">${rel.strength || 5}/10</span>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:4px; flex-shrink:0;">
+                        <button onclick="deleteRelationship(${rel.id})" 
+                                style="background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3); 
+                                       border-radius:8px; color:#ff4444; padding:4px 8px; cursor:pointer; font-size:12px;">
+                            ✕
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+    } catch(e) {
+        console.error('Ошибка загрузки связей:', e);
+    }
+}
+
+// ============================================
+// ДОБАВЛЕНИЕ СВЯЗИ (МОДАЛЬНОЕ ОКНО)
+// ============================================
+
+async function openAddRelationship() {
+    if (!editingCharacterId) {
+        alert('Сначала откройте персонажа на редактирование');
+        return;
+    }
+    
+    try {
+        const r = await fetch(getAuthUrl('/api/characters'));
+        const allChars = await r.json();
+        const available = allChars.filter(c => c.id !== editingCharacterId);
+        
+        if (!available.length) {
+            alert('Нет других персонажей для связи');
+            return;
+        }
+        
+        const typesR = await fetch('/api/characters/relationship-types');
+        const typesData = await typesR.json();
+        
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 10000;
+            display: flex; justify-content: center; align-items: center;
+            backdrop-filter: blur(4px);
+        `;
+        modal.onclick = function(e) {
+            if (e.target === modal) modal.remove();
+        };
+        
+        const content = document.createElement('div');
+        content.style.cssText = `
+            background: #1a1a1a; border-radius: 20px; padding: 30px;
+            max-width: 450px; width: 90%; max-height: 80vh;
+            border: 1px solid rgba(48,76,47,0.3);
+            overflow-y: auto;
+        `;
+        
+        content.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 style="color:#fff; font-size:20px; margin:0;">🔗 Новая связь</h2>
+                <button onclick="this.closest('div[style]').parentElement.remove()" 
+                        style="background:transparent; border:none; color:#888; font-size:24px; cursor:pointer;">✕</button>
+            </div>
+            
+            <div style="margin-bottom:16px;">
+                <label style="color:#888; font-size:13px;">Выберите персонажа:</label>
+                <select id="relCharacterSelect" style="width:100%; padding:10px 14px; margin-top:4px; 
+                        background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); 
+                        border-radius:8px; color:#fff; font-size:14px; outline:none;">
+                    ${available.map(c => `
+                        <option value="${c.id}">${c.name} (${c.role || 'Без роли'})</option>
+                    `).join('')}
+                </select>
+            </div>
+            
+            <div style="margin-bottom:16px;">
+                <label style="color:#888; font-size:13px;">Тип связи:</label>
+                <select id="relTypeSelect" style="width:100%; padding:10px 14px; margin-top:4px; 
+                        background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); 
+                        border-radius:8px; color:#fff; font-size:14px; outline:none;">
+                    ${typesData.types.map(t => `
+                        <option value="${t.value}">${t.label}</option>
+                    `).join('')}
+                </select>
+            </div>
+            
+            <div style="margin-bottom:16px;">
+                <label style="color:#888; font-size:13px;">Описание (необязательно):</label>
+                <input type="text" id="relDescription" placeholder="Например: Вместе учились..." 
+                       style="width:100%; padding:10px 14px; margin-top:4px; 
+                              background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); 
+                              border-radius:8px; color:#fff; font-size:14px; outline:none;">
+            </div>
+            
+            <div style="margin-bottom:16px;">
+                <label style="color:#888; font-size:13px;">Сила связи: <span id="relStrengthValue">5</span>/10</label>
+                <input type="range" id="relStrength" min="1" max="10" value="5" 
+                       style="width:100%; accent-color:#304c2f; margin-top:4px;"
+                       oninput="document.getElementById('relStrengthValue').textContent=this.value">
+            </div>
+            
+            <button onclick="saveRelationship()" 
+                    style="width:100%; padding:14px; background:linear-gradient(45deg,#304c2f,#043267); 
+                           border:none; border-radius:25px; color:#fff; font-size:16px; font-weight:bold; 
+                           cursor:pointer; margin-top:8px;">
+                💾 Сохранить связь
+            </button>
+        `;
+        
+        modal.appendChild(content);
+        document.body.appendChild(modal);
+        
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
+
+async function saveRelationship() {
+    const charId = parseInt(document.getElementById('relCharacterSelect').value);
+    const relType = document.getElementById('relTypeSelect').value;
+    const description = document.getElementById('relDescription').value.trim();
+    const strength = parseInt(document.getElementById('relStrength').value);
+    
+    try {
+        const r = await fetch(getAuthUrl('/api/characters/relationships'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                character_id: editingCharacterId,
+                related_character_id: charId,
+                relationship_type: relType,
+                description: description || null,
+                strength: strength
+            })
+        });
+        const data = await r.json();
+        
+        if (data.success) {
+            alert('✅ Связь создана!');
+            const modal = document.querySelector('div[style*="position: fixed"][style*="z-index: 10000"]');
+            if (modal) modal.remove();
+            await loadRelationships(editingCharacterId);
+        } else {
+            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
+
+async function deleteRelationship(relId) {
+    if (!confirm('Удалить эту связь?')) return;
+    
+    try {
+        const r = await fetch(getAuthUrl('/api/characters/relationships/' + relId), {
+            method: 'DELETE'
+        });
+        const data = await r.json();
+        if (data.success) {
+            await loadRelationships(editingCharacterId);
+        }
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
     }
 }
 </script>
