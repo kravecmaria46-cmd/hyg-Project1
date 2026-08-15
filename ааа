@@ -169,6 +169,8 @@ class Character(Base):
     world_id = Column(Integer, nullable=True)
     key_traits = Column(Text, nullable=True)  
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
+    faction_id = Column(Integer, ForeignKey("factions.id"), nullable=True)
+    faction_rank = Column(String(50), nullable=True)  # звание/должность во фракции
 
 class CharacterRelationship(Base):
     __tablename__ = "character_relationships"
@@ -275,6 +277,35 @@ class Room(Base):
     lorebook_id = Column(Integer, nullable=True)
     members = Column(JSON, default=list)
 
+class Faction(Base):
+    __tablename__ = "factions"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    type = Column(String(50), nullable=True)  # гильдия, дом, орден, клан, секта, корпорация
+    description = Column(Text, nullable=True)
+    history = Column(Text, nullable=True)
+    goals = Column(Text, nullable=True)
+    ideology = Column(Text, nullable=True)
+    leader_id = Column(Integer, ForeignKey("characters.id"), nullable=True)
+    avatar = Column(String(500), nullable=True)
+    influence = Column(Integer, default=5)
+    territory = Column(String(200), nullable=True)
+    motto = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    world_id = Column(Integer, ForeignKey("worlds.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+class FactionRelationship(Base):
+    __tablename__ = "faction_relationships"
+    id = Column(Integer, primary_key=True)
+    faction_id = Column(Integer, ForeignKey("factions.id"), nullable=False)
+    related_faction_id = Column(Integer, ForeignKey("factions.id"), nullable=False)
+    relation_type = Column(String(20), nullable=False)  # ally, enemy, neutral, vassal, master
+    description = Column(Text, nullable=True)
+    strength = Column(Integer, default=5)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 class RoomChatMessage(Base):
     __tablename__ = "room_chat_messages"
     id = Column(Integer, primary_key=True)
@@ -496,6 +527,8 @@ class CharacterCreate(BaseModel):
     world_id: Optional[int] = None
     key_traits: Optional[str] = None  
     room_id: Optional[int] = None
+    faction_id: Optional[int] = None 
+    faction_rank: Optional[str] = None
 
 class WorldCreate(BaseModel):
     name: str
@@ -580,6 +613,28 @@ class RegenerateRequest(BaseModel):
     temperature: Optional[float] = 0.8
     mode: Optional[str] = "all"
     max_tokens: Optional[int] = 1500
+
+class FactionCreate(BaseModel):
+    name: str
+    type: Optional[str] = None
+    description: Optional[str] = None
+    history: Optional[str] = None
+    goals: Optional[str] = None
+    ideology: Optional[str] = None
+    leader_id: Optional[int] = None
+    avatar: Optional[str] = None
+    influence: Optional[int] = 5
+    territory: Optional[str] = None
+    motto: Optional[str] = None
+    world_id: int
+
+
+class FactionRelationshipCreate(BaseModel):
+    faction_id: int
+    related_faction_id: int
+    relation_type: str  # ally, enemy, neutral, vassal, master
+    description: Optional[str] = None
+    strength: Optional[int] = 5
 
 # ============================================
 # ЗАГРУЗКА АВАТАРОК
@@ -1168,6 +1223,286 @@ async def delete_world(world_id: int, token: str):
         db.delete(world)
         db.commit()
         return {"success": True}
+
+        # ============================================
+# ФРАКЦИИ
+# ============================================
+
+@app.get("/api/factions")
+async def get_factions(token: str, world_id: Optional[int] = None):
+    """Получить все фракции (или по миру)"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        query = db.query(Faction).filter(Faction.user_id == user.id)
+        if world_id:
+            query = query.filter(Faction.world_id == world_id)
+        factions = query.order_by(Faction.name).all()
+        
+        return [{
+            "id": f.id,
+            "name": f.name,
+            "type": f.type,
+            "description": f.description,
+            "avatar": f.avatar,
+            "influence": f.influence,
+            "territory": f.territory,
+            "motto": f.motto,
+            "world_id": f.world_id,
+            "leader_id": f.leader_id,
+            "created_at": f.created_at
+        } for f in factions]
+
+
+@app.post("/api/factions")
+async def create_faction(faction: FactionCreate, token: str):
+    """Создать фракцию"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        # Проверяем, что мир принадлежит пользователю
+        world = db.query(World).filter(
+            World.id == faction.world_id,
+            World.created_by == user.id
+        ).first()
+        if not world:
+            return JSONResponse({"error": "Мир не найден"}, 404)
+        
+        new_faction = Faction(
+            **faction.dict(),
+            user_id=user.id
+        )
+        db.add(new_faction)
+        db.commit()
+        db.refresh(new_faction)
+        
+        return {"id": new_faction.id, "name": new_faction.name, "success": True}
+
+
+@app.get("/api/factions/{faction_id}")
+async def get_faction(faction_id: int, token: str):
+    """Получить фракцию по ID"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        faction = db.query(Faction).filter(
+            Faction.id == faction_id,
+            Faction.user_id == user.id
+        ).first()
+        
+        if not faction:
+            return JSONResponse({"error": "Фракция не найдена"}, 404)
+        
+        # Получаем лидера
+        leader = None
+        if faction.leader_id:
+            leader = db.query(Character).filter(Character.id == faction.leader_id).first()
+        
+        # Получаем членов фракции
+        members = db.query(Character).filter(
+            Character.faction_id == faction_id,
+            Character.user_id == user.id
+        ).all()
+        
+        # Получаем связи с другими фракциями
+        relationships = db.query(FactionRelationship).filter(
+            FactionRelationship.faction_id == faction_id
+        ).all()
+        
+        rel_list = []
+        for rel in relationships:
+            related = db.query(Faction).filter(Faction.id == rel.related_faction_id).first()
+            rel_list.append({
+                "id": rel.id,
+                "related_faction_id": rel.related_faction_id,
+                "related_faction_name": related.name if related else "Unknown",
+                "relation_type": rel.relation_type,
+                "description": rel.description,
+                "strength": rel.strength
+            })
+        
+        return {
+            "id": faction.id,
+            "name": faction.name,
+            "type": faction.type,
+            "description": faction.description,
+            "history": faction.history,
+            "goals": faction.goals,
+            "ideology": faction.ideology,
+            "avatar": faction.avatar,
+            "influence": faction.influence,
+            "territory": faction.territory,
+            "motto": faction.motto,
+            "world_id": faction.world_id,
+            "leader": {
+                "id": leader.id,
+                "name": leader.name
+            } if leader else None,
+            "members": [{
+                "id": m.id,
+                "name": m.name,
+                "role": m.role,
+                "avatar": m.avatar
+            } for m in members],
+            "relationships": rel_list
+        }
+
+
+@app.put("/api/factions/{faction_id}")
+async def update_faction(faction_id: int, faction: FactionCreate, token: str):
+    """Обновить фракцию"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        existing = db.query(Faction).filter(
+            Faction.id == faction_id,
+            Faction.user_id == user.id
+        ).first()
+        
+        if not existing:
+            return JSONResponse({"error": "Фракция не найдена"}, 404)
+        
+        for key, value in faction.dict().items():
+            setattr(existing, key, value)
+        existing.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(existing)
+        
+        return {"success": True}
+
+
+@app.delete("/api/factions/{faction_id}")
+async def delete_faction(faction_id: int, token: str):
+    """Удалить фракцию"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        faction = db.query(Faction).filter(
+            Faction.id == faction_id,
+            Faction.user_id == user.id
+        ).first()
+        
+        if not faction:
+            return JSONResponse({"error": "Фракция не найдена"}, 404)
+        
+        # Удаляем связи
+        db.query(FactionRelationship).filter(
+            FactionRelationship.faction_id == faction_id
+        ).delete()
+        
+        # Отвязываем персонажей
+        db.query(Character).filter(Character.faction_id == faction_id).update(
+            {"faction_id": None, "faction_rank": None}
+        )
+        
+        db.delete(faction)
+        db.commit()
+        
+        return {"success": True}
+
+
+# ============================================
+# СВЯЗИ МЕЖДУ ФРАКЦИЯМИ
+# ============================================
+
+@app.post("/api/factions/relationships")
+async def create_faction_relationship(rel: FactionRelationshipCreate, token: str):
+    """Создать связь между фракциями"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        # Проверяем, что обе фракции принадлежат пользователю
+        f1 = db.query(Faction).filter(
+            Faction.id == rel.faction_id,
+            Faction.user_id == user.id
+        ).first()
+        if not f1:
+            return JSONResponse({"error": "Фракция не найдена"}, 404)
+        
+        f2 = db.query(Faction).filter(
+            Faction.id == rel.related_faction_id,
+            Faction.user_id == user.id
+        ).first()
+        if not f2:
+            return JSONResponse({"error": "Связанная фракция не найдена"}, 404)
+        
+        # Проверяем дубликат
+        existing = db.query(FactionRelationship).filter(
+            FactionRelationship.faction_id == rel.faction_id,
+            FactionRelationship.related_faction_id == rel.related_faction_id
+        ).first()
+        
+        if existing:
+            return JSONResponse({"error": "Связь уже существует"}, 400)
+        
+        new_rel = FactionRelationship(
+            faction_id=rel.faction_id,
+            related_faction_id=rel.related_faction_id,
+            relation_type=rel.relation_type,
+            description=rel.description,
+            strength=rel.strength or 5
+        )
+        db.add(new_rel)
+        db.commit()
+        
+        return {"success": True}
+
+
+@app.delete("/api/factions/relationships/{rel_id}")
+async def delete_faction_relationship(rel_id: int, token: str):
+    """Удалить связь между фракциями"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        rel = db.query(FactionRelationship).filter(
+            FactionRelationship.id == rel_id
+        ).first()
+        
+        if not rel:
+            return JSONResponse({"error": "Связь не найдена"}, 404)
+        
+        # Проверяем, что фракция принадлежит пользователю
+        faction = db.query(Faction).filter(
+            Faction.id == rel.faction_id,
+            Faction.user_id == user.id
+        ).first()
+        if not faction:
+            return JSONResponse({"error": "Фракция не найдена"}, 404)
+        
+        db.delete(rel)
+        db.commit()
+        
+        return {"success": True}
+
+
+@app.get("/api/factions/relation-types")
+async def get_faction_relation_types():
+    """Получить типы отношений между фракциями"""
+    return {
+        "types": [
+            {"value": "ally", "label": "🤝 Союзник"},
+            {"value": "enemy", "label": "⚔️ Враг"},
+            {"value": "neutral", "label": "😐 Нейтральный"},
+            {"value": "vassal", "label": "👑 Вассал"},
+            {"value": "master", "label": "👑 Сюзерен"}
+        ]
+    }
+
 
 
 # --- ПЕРСОНЫ ---
@@ -3780,6 +4115,7 @@ HTML = r"""<!DOCTYPE html>
         <div class="menu-label" style="margin-top:12px;">Создатель</div>
         <a onclick="showPage('characters')"><span class="icon">✦</span>Персонажи</a>
         <a onclick="showPage('worlds')"><span class="icon">⊙</span>Миры</a>
+        <a onclick="showPage('factions')"><span class="icon">🏛️</span>Фракции</a>
 
         <a onclick="showPage('lore')" style="margin-top:12px;"><span class="icon">◈</span>Лорбук</a>
         <a onclick="showPage('profile')"><span class="icon">⚙</span>Квартира</a>
@@ -4014,6 +4350,55 @@ HTML = r"""<!DOCTYPE html>
             <button class="btn" onclick="updateWorld()">Сохранить изменения</button>
         </div>
     </div>
+
+    <!-- ===== ФРАКЦИИ ===== -->
+<div id="page-factions" class="page">
+    <div class="flex-between">
+        <div>
+            <div class="page-title">Фракции</div>
+            <div class="page-desc">Организации и группы твоего мира</div>
+        </div>
+        <button class="btn-primary" onclick="showCreateFaction()">+ Создать</button>
+    </div>
+    <div class="grid" id="factionsGrid"></div>
+</div>
+
+<!-- ===== СОЗДАНИЕ ФРАКЦИИ ===== -->
+<div id="page-faction-create" class="page">
+    <div class="flex-between">
+        <div><div class="page-title">Создать фракцию</div><div class="page-desc">Новая организация в твоём мире</div></div>
+        <button class="btn-primary" onclick="showPage('factions')">Назад</button>
+    </div>
+    <div class="form-box">
+        <input type="text" id="factionName" placeholder="Название фракции">
+        <select id="factionType" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="guild">🏛️ Гильдия</option>
+            <option value="house">👑 Дом</option>
+            <option value="order">⚔️ Орден</option>
+            <option value="clan">🌿 Клан</option>
+            <option value="sect">🔮 Секта</option>
+            <option value="corporation">🏢 Корпорация</option>
+            <option value="kingdom">👑 Королевство</option>
+            <option value="empire">🌍 Империя</option>
+        </select>
+        <select id="factionWorld" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="">Выберите мир</option>
+        </select>
+        <textarea id="factionDesc" placeholder="Описание фракции"></textarea>
+        <textarea id="factionHistory" placeholder="История фракции"></textarea>
+        <textarea id="factionGoals" placeholder="Цели фракции"></textarea>
+        <textarea id="factionIdeology" placeholder="Идеология"></textarea>
+        <input type="text" id="factionTerritory" placeholder="Территория/База">
+        <input type="text" id="factionMotto" placeholder="Девиз">
+        <input type="number" id="factionInfluence" placeholder="Влияние (1-10)" value="5" min="1" max="10">
+        <input type="text" id="factionAvatar" placeholder="Ссылка на эмблему">
+        <label class="file-label">
+            <span id="factionAvatarLabel">Или загрузить изображение</span>
+            <input type="file" id="factionAvatarFile" accept="image/*" onchange="uploadAvatar('factionAvatarFile','factionAvatar','factionAvatarLabel')">
+        </label>
+        <button class="btn" onclick="saveFaction()">Создать фракцию</button>
+    </div>
+</div>
 
     <!-- ===== ПЕРСОНЫ (ЛИЧНОЕ ПРОСТРАНСТВО) ===== -->
     <div id="page-personas" class="page">
@@ -4662,6 +5047,7 @@ function showPage(id) {
     if (id === 'lore') { loadLore(); loadLoreSelects(); }
     if (id === 'rooms') loadRooms();
     if (id === 'chats') loadChats();
+    if (id === 'factions') loadFactions();
 
     // ========== УПРАВЛЕНИЕ ИСТОРИЕЙ ==========
     if (pageHistory[pageHistory.length - 1] !== id) {
@@ -5975,6 +6361,125 @@ async function deleteWorld(id) {
         await fetch(getAuthUrl('/api/worlds/' + id), { method: 'DELETE' });
         loadWorlds();
     } catch(e) { alert('Ошибка удаления'); }
+}
+// ============================================
+// ФРАКЦИИ
+// ============================================
+
+async function loadFactions() {
+    if (!authToken) {
+        document.getElementById('factionsGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть фракции</div>';
+        return;
+    }
+    
+    try {
+        const r = await fetch(getAuthUrl('/api/factions'));
+        const factions = await r.json();
+        const grid = document.getElementById('factionsGrid');
+        
+        if (!factions || !factions.length) {
+            grid.innerHTML = '<div style="color:#666;text-align:center;padding:40px;">У вас пока нет фракций<br><span style="font-size:13px;color:#444;">Создайте свою первую фракцию!</span></div>';
+            return;
+        }
+        
+        grid.innerHTML = factions.map(f => `
+            <div class="card" onclick="viewFaction(${f.id})" style="cursor:pointer;">
+                <div class="avatar">${f.avatar ? '<img src="'+f.avatar+'">' : '🏛️'}</div>
+                <div class="name">${f.name}</div>
+                <div class="role">${f.type || 'Без типа'} ${f.influence ? '⭐'+f.influence : ''}</div>
+                <div class="role" style="font-size:11px; color:#555;">${f.territory || 'Нет территории'}</div>
+                <div class="actions">
+                    <button onclick="event.stopPropagation(); viewFaction(${f.id})" style="background:rgba(48,76,47,0.3);">👁️ Просмотр</button>
+                    <button onclick="event.stopPropagation(); deleteFaction(${f.id})" class="danger">🗑️</button>
+                </div>
+            </div>
+        `).join('');
+        
+    } catch(e) {
+        console.error('Ошибка загрузки фракций:', e);
+    }
+}
+
+async function loadFactionWorlds() {
+    if (!authToken) return;
+    try {
+        const r = await fetch(getAuthUrl('/api/worlds'));
+        const worlds = await r.json();
+        const sel = document.getElementById('factionWorld');
+        sel.innerHTML = '<option value="">Выберите мир</option>';
+        worlds.forEach(w => {
+            sel.innerHTML += `<option value="${w.id}">${w.name}</option>`;
+        });
+    } catch(e) {}
+}
+
+function showCreateFaction() {
+    document.getElementById('factionName').value = '';
+    document.getElementById('factionDesc').value = '';
+    document.getElementById('factionHistory').value = '';
+    document.getElementById('factionGoals').value = '';
+    document.getElementById('factionIdeology').value = '';
+    document.getElementById('factionTerritory').value = '';
+    document.getElementById('factionMotto').value = '';
+    document.getElementById('factionInfluence').value = '5';
+    document.getElementById('factionAvatar').value = '';
+    document.getElementById('factionAvatarLabel').textContent = 'Или загрузить изображение';
+    loadFactionWorlds();
+    showPage('faction-create');
+}
+
+async function saveFaction() {
+    if (!authToken) { alert('Войдите чтобы создать фракцию'); return; }
+    
+    const world_id = parseInt(document.getElementById('factionWorld').value);
+    if (!world_id) { alert('Выберите мир'); return; }
+    
+    const data = {
+        name: document.getElementById('factionName').value.trim(),
+        type: document.getElementById('factionType').value,
+        description: document.getElementById('factionDesc').value.trim() || null,
+        history: document.getElementById('factionHistory').value.trim() || null,
+        goals: document.getElementById('factionGoals').value.trim() || null,
+        ideology: document.getElementById('factionIdeology').value.trim() || null,
+        territory: document.getElementById('factionTerritory').value.trim() || null,
+        motto: document.getElementById('factionMotto').value.trim() || null,
+        influence: parseInt(document.getElementById('factionInfluence').value) || 5,
+        avatar: document.getElementById('factionAvatar').value.trim() || null,
+        world_id: world_id
+    };
+    
+    if (!data.name) { alert('Введите название'); return; }
+    
+    try {
+        const r = await fetch(getAuthUrl('/api/factions'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const d = await r.json();
+        if (d.success) {
+            alert('✅ Фракция создана!');
+            showPage('factions');
+            loadFactions();
+        } else {
+            alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
+        }
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
+
+async function deleteFaction(id) {
+    if (!confirm('Удалить фракцию?')) return;
+    try {
+        const r = await fetch(getAuthUrl('/api/factions/' + id), { method: 'DELETE' });
+        const data = await r.json();
+        if (data.success) {
+            loadFactions();
+        }
+    } catch(e) {
+        alert('Ошибка удаления');
+    }
 }
 
 // ============================================
