@@ -170,6 +170,17 @@ class Character(Base):
     key_traits = Column(Text, nullable=True)  
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
 
+class CharacterRelationship(Base):
+    __tablename__ = "character_relationships"
+    id = Column(Integer, primary_key=True)
+    character_id = Column(Integer, ForeignKey("characters.id"), nullable=False)
+    related_character_id = Column(Integer, ForeignKey("characters.id"), nullable=False)
+    relationship_type = Column(String(50), nullable=False)  # friend, enemy, family, love, mentor, rival, etc.
+    description = Column(Text, nullable=True)
+    strength = Column(Integer, default=5)  # 1-10
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class World(Base):
     __tablename__ = "worlds"
     id = Column(Integer, primary_key=True)
@@ -543,6 +554,13 @@ class ChatRequest(BaseModel):
     mode: Optional[str] = "all"
     max_tokens: Optional[int] = 1500
 
+class RelationshipCreate(BaseModel):
+    character_id: int
+    related_character_id: int
+    relationship_type: str
+    description: Optional[str] = None
+    strength: Optional[int] = 5
+
 class ApiKeysUpdate(BaseModel):
     keys: dict
 
@@ -768,6 +786,169 @@ async def delete_character(char_id: int, token: str):
         db.delete(char)
         db.commit()
         return {"success": True}
+        
+        # --- СВЯЗИ МЕЖДУ ПЕРСОНАЖАМИ ---
+
+@app.get("/api/characters/{character_id}/relationships")
+async def get_character_relationships(character_id: int, token: str):
+    """Получить все связи персонажа"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        # Проверяем, что персонаж принадлежит пользователю
+        character = db.query(Character).filter(
+            Character.id == character_id,
+            Character.user_id == user.id
+        ).first()
+        if not character:
+            return JSONResponse({"error": "Персонаж не найден"}, 404)
+        
+        relationships = db.query(CharacterRelationship).filter(
+            CharacterRelationship.character_id == character_id
+        ).all()
+        
+        result = []
+        for rel in relationships:
+            related = db.query(Character).filter(Character.id == rel.related_character_id).first()
+            result.append({
+                "id": rel.id,
+                "character_id": rel.character_id,
+                "related_character_id": rel.related_character_id,
+                "related_character_name": related.name if related else "Unknown",
+                "relationship_type": rel.relationship_type,
+                "description": rel.description,
+                "strength": rel.strength,
+                "created_at": rel.created_at
+            })
+        
+        return result
+
+@app.post("/api/characters/relationships")
+async def create_relationship(rel: RelationshipCreate, token: str):
+    """Создать связь между персонажами"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        # Проверяем, что оба персонажа принадлежат пользователю
+        char1 = db.query(Character).filter(
+            Character.id == rel.character_id,
+            Character.user_id == user.id
+        ).first()
+        if not char1:
+            return JSONResponse({"error": "Первый персонаж не найден"}, 404)
+        
+        char2 = db.query(Character).filter(
+            Character.id == rel.related_character_id,
+            Character.user_id == user.id
+        ).first()
+        if not char2:
+            return JSONResponse({"error": "Второй персонаж не найден"}, 404)
+        
+        # Проверяем, не существует ли уже такая связь
+        existing = db.query(CharacterRelationship).filter(
+            CharacterRelationship.character_id == rel.character_id,
+            CharacterRelationship.related_character_id == rel.related_character_id
+        ).first()
+        
+        if existing:
+            return JSONResponse({"error": "Связь уже существует"}, 400)
+        
+        new_rel = CharacterRelationship(
+            character_id=rel.character_id,
+            related_character_id=rel.related_character_id,
+            relationship_type=rel.relationship_type,
+            description=rel.description,
+            strength=rel.strength or 5
+        )
+        db.add(new_rel)
+        db.commit()
+        db.refresh(new_rel)
+        
+        return {"id": new_rel.id, "success": True}
+
+@app.put("/api/characters/relationships/{rel_id}")
+async def update_relationship(rel_id: int, rel: RelationshipCreate, token: str):
+    """Обновить связь между персонажами"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        existing = db.query(CharacterRelationship).filter(
+            CharacterRelationship.id == rel_id
+        ).first()
+        
+        if not existing:
+            return JSONResponse({"error": "Связь не найдена"}, 404)
+        
+        # Проверяем, что персонажи принадлежат пользователю
+        char1 = db.query(Character).filter(
+            Character.id == existing.character_id,
+            Character.user_id == user.id
+        ).first()
+        if not char1:
+            return JSONResponse({"error": "Персонаж не найден"}, 404)
+        
+        existing.relationship_type = rel.relationship_type
+        existing.description = rel.description
+        existing.strength = rel.strength or 5
+        existing.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(existing)
+        
+        return {"success": True}
+
+@app.delete("/api/characters/relationships/{rel_id}")
+async def delete_relationship(rel_id: int, token: str):
+    """Удалить связь между персонажами"""
+    user = get_user_by_token(token)
+    if not user:
+        return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    with SessionLocal() as db:
+        rel = db.query(CharacterRelationship).filter(
+            CharacterRelationship.id == rel_id
+        ).first()
+        
+        if not rel:
+            return JSONResponse({"error": "Связь не найдена"}, 404)
+        
+        # Проверяем, что персонаж принадлежит пользователю
+        character = db.query(Character).filter(
+            Character.id == rel.character_id,
+            Character.user_id == user.id
+        ).first()
+        if not character:
+            return JSONResponse({"error": "Персонаж не найден"}, 404)
+        
+        db.delete(rel)
+        db.commit()
+        
+        return {"success": True}
+
+@app.get("/api/characters/relationship-types")
+async def get_relationship_types():
+    """Получить список типов связей"""
+    return {
+        "types": [
+            {"value": "friend", "label": "👫 Друг"},
+            {"value": "best_friend", "label": "💛 Лучший друг"},
+            {"value": "enemy", "label": "⚔️ Враг"},
+            {"value": "rival", "label": "🏆 Соперник"},
+            {"value": "family", "label": "👨‍👩‍👧‍👦 Семья"},
+            {"value": "love", "label": "❤️ Любовь"},
+            {"value": "crush", "label": "💕 Влюблённость"},
+            {"value": "mentor", "label": "📚 Наставник"},
+            {"value": "student", "label": "🎓 Ученик"},
+            {"value": "ally", "label": "🤝 Союзник"},
+            {"value": "neutral", "label": "😐 Нейтральный"}
+        ]
+    }
 
 # --- ГЕНЕРАЦИЯ ПЕРСОНАЖА ЧЕРЕЗ AI ---
 
