@@ -1475,7 +1475,7 @@ async def room_chat(room_id: int, message: str, token: str):
 
 
 @app.get("/api/rooms/{room_id}/chat/history")
-async def get_room_chat_history(room_id: int, limit: int = 50, token: str):
+async def get_room_chat_history(room_id: int, token: str, limit: int = 50):
     """Получить историю общего чата комнаты"""
     user = get_user_by_token(token)
     if not user:
@@ -7690,7 +7690,7 @@ def is_empty_response(text: str) -> bool:
         return True
     
     return False
-    
+
     # ============================================
 # ФУНКЦИИ ДЛЯ ОБЩЕГО ЧАТА КОМНАТЫ
 # ============================================
