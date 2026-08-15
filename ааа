@@ -1404,13 +1404,17 @@ async def get_room_characters(room_id: int, token: str):
             "description": c.description
         } for c in chars]
 
-# ===== ЗДЕСЬ ДОЛЖЕН БЫТЬ POST ЭНДПОИНТ (НА ОДНОМ УРОВНЕ) =====
+# ===== POST ЭНДПОИНТ ДЛЯ ДОБАВЛЕНИЯ ПЕРСОНАЖА В КОМНАТУ =====
 @app.post("/api/rooms/{room_id}/characters")
-async def add_room_character(room_id: int, character_id: int, token: str):
+async def add_room_character(room_id: int, req: dict, token: str):
     """Добавить персонажа в комнату"""
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
+    
+    character_id = req.get('character_id')
+    if not character_id:
+        return JSONResponse({"error": "Не указан character_id"}, 400)
     
     with SessionLocal() as db:
         room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
@@ -1434,8 +1438,7 @@ async def add_room_character(room_id: int, character_id: int, token: str):
         
         return {"success": True}
 
-
-        # ============================================
+# ============================================
 # ОБЩИЙ ЧАТ КОМНАТЫ (API)
 # ============================================
 
@@ -1539,7 +1542,6 @@ async def get_room_chat_history(room_id: int, token: str, limit: int = 50):
                 "avatar": avatar
             })
         return result
-
 # API КЛЮЧИ 
 
 @app.get("/api/keys")
