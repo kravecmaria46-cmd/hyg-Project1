@@ -3565,39 +3565,44 @@ HTML = r"""<!DOCTYPE html>
     </div>
 
     <!-- ===== РЕДАКТИРОВАНИЕ ПЕРСОНАЖА ===== -->
-    <div id="page-character-edit" class="page">
-        <div class="flex-between">
-            <div><div class="page-title">Редактировать персонажа</div><div class="page-desc">Измени данные своего героя</div></div>
-            <button class="btn-primary" onclick="showPage('characters')">Назад</button>
-        </div>
-        <div class="form-box">
-            <input type="text" id="editCharName" placeholder="Имя">
-            <input type="text" id="editCharRole" placeholder="Роль">
-            <textarea id="editCharDesc" placeholder="Описание"></textarea>
-            <textarea id="editCharPersonality" placeholder="Характер"></textarea>
-            <textarea id="editCharBackstory" placeholder="Предыстория"></textarea>
-            <textarea id="editCharGreeting" placeholder="Приветствие" style="min-height:60px;"></textarea>
-            <input type="text" id="editCharAvatar" placeholder="Ссылка на аватарку">
-            <label class="file-label">
-                <span id="editCharAvatarLabel">Или загрузить изображение</span>
-                <input type="file" id="editCharAvatarFile" accept="image/*" onchange="uploadAvatar('editCharAvatarFile','editCharAvatar','editCharAvatarLabel')">
-            </label>
-            <select id="editCharWorld" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
-                <option value="">Без мира</option>
-            </select>
-            
-            <label class="checkbox-label"><input type="checkbox" id="editCharPublic"> Публичный</label>
-            <div style="display:flex; gap:10px; margin:8px 0;">
-                <input type="text" id="editGeneratePrompt"
-                       placeholder="Опиши нового персонажа для перегенерации..."
-                       style="flex:1; padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:14px;">
-                <button onclick="regenerateCharacter()" class="btn-primary" style="padding:8px 20px; white-space:nowrap; display:flex; align-items:center; gap:6px;">
-                    <span style="font-size:16px;">↻</span> Перегенерировать
-                </button>
-            </div>
-            <button class="btn" onclick="updateCharacter()">Сохранить изменения</button>
-        </div>
+<div id="page-character-edit" class="page">
+    <div class="flex-between">
+        <div><div class="page-title">Редактировать персонажа</div><div class="page-desc">Измени данные своего героя</div></div>
+        <button class="btn-primary" onclick="showPage('characters')">Назад</button>
     </div>
+    <div class="form-box">
+        <input type="text" id="editCharName" placeholder="Имя">
+        <input type="text" id="editCharRole" placeholder="Роль">
+        <textarea id="editCharDesc" placeholder="Описание"></textarea>
+        <textarea id="editCharPersonality" placeholder="Характер"></textarea>
+        <textarea id="editCharBackstory" placeholder="Предыстория"></textarea>
+        <textarea id="editCharGreeting" placeholder="Приветствие" style="min-height:60px;"></textarea>
+        
+        <!-- ========== ДОБАВЬТЕ ЭТОТ БЛОК ========== -->
+        <textarea id="editCharKeyTraits" placeholder="Ключевые черты (обязательные)&#10;Например: честный, смелый, не умеет врать" style="min-height:60px;"></textarea>
+        <!-- =========================================== -->
+        
+        <input type="text" id="editCharAvatar" placeholder="Ссылка на аватарку">
+        <label class="file-label">
+            <span id="editCharAvatarLabel">Или загрузить изображение</span>
+            <input type="file" id="editCharAvatarFile" accept="image/*" onchange="uploadAvatar('editCharAvatarFile','editCharAvatar','editCharAvatarLabel')">
+        </label>
+        <select id="editCharWorld" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
+            <option value="">Без мира</option>
+        </select>
+        
+        <label class="checkbox-label"><input type="checkbox" id="editCharPublic"> Публичный</label>
+        <div style="display:flex; gap:10px; margin:8px 0;">
+            <input type="text" id="editGeneratePrompt"
+                   placeholder="Опиши нового персонажа для перегенерации..."
+                   style="flex:1; padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:14px;">
+            <button onclick="regenerateCharacter()" class="btn-primary" style="padding:8px 20px; white-space:nowrap; display:flex; align-items:center; gap:6px;">
+                <span style="font-size:16px;">↻</span> Перегенерировать
+            </button>
+        </div>
+        <button class="btn" onclick="updateCharacter()">Сохранить изменения</button>
+    </div>
+</div>
 
     <!-- ===== МИРЫ (СОЗДАТЕЛЬ) ===== -->
     <div id="page-worlds" class="page">
