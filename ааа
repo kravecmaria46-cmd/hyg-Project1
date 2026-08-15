@@ -6418,7 +6418,7 @@ async function selectCharacterForRoom(charId) {
         const addR = await fetch(getAuthUrl('/api/rooms/' + currentRoomId + '/characters'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ character_id: charId })
+            body: JSON.stringify({ character_id: charId })   // ← ПРАВИЛЬНО
         });
         const data = await addR.json();
         
@@ -6432,7 +6432,6 @@ async function selectCharacterForRoom(charId) {
         alert('Ошибка: ' + e.message);
     }
 }
-
 // ============================================
 // РЕДАКТИРОВАНИЕ КОМНАТЫ
 // ============================================
