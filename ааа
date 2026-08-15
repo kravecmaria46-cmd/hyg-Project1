@@ -333,14 +333,13 @@ LORE_CATEGORIES = {
 }
 
 # БД с миграцией 
-
 try:
     with engine.connect() as conn:
         # Проверка тип БД
         if DATABASE_URL.startswith("sqlite"):
             # room_id для characters
             try:
-                conn.execute("ALTER TABLE characters ADD COLUMN room_id INTEGER REFERENCES rooms(id)")
+                conn.execute(text("ALTER TABLE characters ADD COLUMN room_id INTEGER REFERENCES rooms(id)"))
                 conn.commit()
                 print("✅ Колонка room_id добавлена в SQLite")
             except Exception as e:
@@ -348,7 +347,7 @@ try:
             
             # world_id для memory_hierarchy
             try:
-                conn.execute("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER")
+                conn.execute(text("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER"))
                 conn.commit()
                 print("✅ Колонка world_id добавлена в SQLite")
             except Exception as e:
@@ -356,7 +355,7 @@ try:
             
             # key_traits для characters
             try:
-                conn.execute("ALTER TABLE characters ADD COLUMN key_traits TEXT")
+                conn.execute(text("ALTER TABLE characters ADD COLUMN key_traits TEXT"))
                 conn.commit()
                 print("✅ Колонка key_traits добавлена в SQLite")
             except Exception as e:
@@ -364,10 +363,9 @@ try:
             
         else:
             # Для PostgreSQL/MySQL с внешним ключом
-            
             # world_id для memory_hierarchy
             try:
-                conn.execute("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER REFERENCES worlds(id)")
+                conn.execute(text("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER REFERENCES worlds(id)"))
                 conn.commit()
                 print("✅ Колонка world_id добавлена")
             except Exception as e:
@@ -375,7 +373,7 @@ try:
             
             # key_traits для characters
             try:
-                conn.execute("ALTER TABLE characters ADD COLUMN key_traits TEXT")
+                conn.execute(text("ALTER TABLE characters ADD COLUMN key_traits TEXT"))
                 conn.commit()
                 print("✅ Колонка key_traits добавлена")
             except Exception as e:
@@ -383,28 +381,13 @@ try:
             
             # room_id для characters 
             try:
-                conn.execute("ALTER TABLE characters ADD COLUMN room_id INTEGER REFERENCES rooms(id)")
+                conn.execute(text("ALTER TABLE characters ADD COLUMN room_id INTEGER REFERENCES rooms(id)"))
                 conn.commit()
                 print("✅ Колонка room_id добавлена")
             except Exception as e:
                 print(f"ℹ️ Колонка room_id уже существует или ошибка: {e}")
     
     # Создаем остальные таблицы (если их нет)
-    Base.metadata.create_all(bind=engine)
-    print("✅ База данных подключена")
-    
-except Exception as e:
-    print(f"❌ Ошибка: {e}")
-            
-            # ДОБАВИЛА key_traits ДЛЯ characters
-            try:
-                conn.execute("ALTER TABLE characters ADD COLUMN key_traits TEXT")
-                conn.commit()
-                print("✅ Колонка key_traits добавлена")
-            except Exception as e:
-                print(f"ℹ️ Колонка key_traits уже существует или ошибка: {e}")
-                
-    # остальные таблицы 
     Base.metadata.create_all(bind=engine)
     print("✅ База данных подключена")
     
