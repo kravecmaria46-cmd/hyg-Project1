@@ -1403,7 +1403,9 @@ async def get_room_characters(room_id: int, token: str):
             "avatar": c.avatar,
             "description": c.description
         } for c in chars]
-        @app.post("/api/rooms/{room_id}/characters")
+
+# ===== ЭТОТ ЭНДПОИНТ ДОЛЖЕН БЫТЬ НА ОДНОМ УРОВНЕ С GET =====
+@app.post("/api/rooms/{room_id}/characters")
 async def add_room_character(room_id: int, character_id: int, token: str):
     """Добавить персонажа в комнату"""
     user = get_user_by_token(token)
@@ -1423,7 +1425,6 @@ async def add_room_character(room_id: int, character_id: int, token: str):
         if not character:
             return JSONResponse({"error": "Персонаж не найден"}, 404)
         
-        # Проверяем лимит (100 персонажей)
         existing_count = db.query(Character).filter(Character.room_id == room_id).count()
         if existing_count >= 100:
             return JSONResponse({"error": "В комнате может быть не более 100 персонажей"}, 400)
