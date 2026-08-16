@@ -1008,10 +1008,6 @@ async def get_relationship_types():
 
 # --- ГЕНЕРАЦИЯ ПЕРСОНАЖА ЧЕРЕЗ AI ---
 
-class GenerateRequest(BaseModel):
-    prompt: str
-    world_id: Optional[int] = None
-
 @app.post("/api/generate/character")
 async def generate_character(req: GenerateRequest, token: str):
     try:
@@ -1173,6 +1169,8 @@ async def generate_character(req: GenerateRequest, token: str):
         import traceback
         traceback.print_exc()
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
+
+# --- МИРЫ ---
 
 @app.get("/api/worlds")
 async def get_worlds(token: str):
