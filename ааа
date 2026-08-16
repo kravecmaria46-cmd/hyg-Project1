@@ -8967,6 +8967,83 @@ def get_room_context(room_id: int, character_id: int, limit: int = 20):
         }
         return context
 
+        # ============================================
+# ПРОВЕРКА И ДОБАВЛЕНИЕ НЕДОСТАЮЩИХ КОЛОНОК
+# ============================================
+
+def check_and_fix_db():
+    """Проверяет и добавляет недостающие колонки в БД"""
+    try:
+        with engine.connect() as conn:
+            # Проверяем колонки в таблице characters
+            columns = conn.execute(text("PRAGMA table_info(characters)")).fetchall()
+            existing_columns = [col[1] for col in columns]
+            print(f"📋 Существующие колонки в characters: {existing_columns}")
+            
+            # Список колонок, которые нужно добавить
+            needed_columns = {
+                "faction_id": "INTEGER REFERENCES factions(id)",
+                "faction_rank": "TEXT",
+                "key_traits": "TEXT",
+                "room_id": "INTEGER REFERENCES rooms(id)"
+            }
+            
+            # Добавляем недостающие колонки
+            for col_name, col_type in needed_columns.items():
+                if col_name not in existing_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE characters ADD COLUMN {col_name} {col_type}"))
+                        print(f"✅ Добавлена колонка: {col_name}")
+                    except Exception as e:
+                        print(f"⚠️ Не удалось добавить {col_name}: {e}")
+            
+            # Проверяем колонки в таблице lore_entries
+            columns_lore = conn.execute(text("PRAGMA table_info(lore_entries)")).fetchall()
+            existing_lore_columns = [col[1] for col in columns_lore]
+            
+            needed_lore_columns = {
+                "lore_type": "TEXT DEFAULT 'general'",
+                "subcategory": "TEXT",
+                "location": "TEXT",
+                "timeline_date": "TEXT",
+                "importance": "INTEGER DEFAULT 1",
+                "is_secret": "BOOLEAN DEFAULT 0",
+                "related_entities": "JSON"
+            }
+            
+            for col_name, col_type in needed_lore_columns.items():
+                if col_name not in existing_lore_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE lore_entries ADD COLUMN {col_name} {col_type}"))
+                        print(f"✅ Добавлена колонка: {col_name} в lore_entries")
+                    except Exception as e:
+                        print(f"⚠️ Не удалось добавить {col_name} в lore_entries: {e}")
+            
+            # Проверяем колонки в таблице memory_hierarchy
+            columns_memory = conn.execute(text("PRAGMA table_info(memory_hierarchy)")).fetchall()
+            existing_memory_columns = [col[1] for col in columns_memory]
+            
+            if "world_id" not in existing_memory_columns:
+                try:
+                    conn.execute(text("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER REFERENCES worlds(id)"))
+                    print("✅ Добавлена колонка: world_id в memory_hierarchy")
+                except Exception as e:
+                    print(f"⚠️ Не удалось добавить world_id в memory_hierarchy: {e}")
+            
+            conn.commit()
+            print("✅ Проверка БД завершена")
+            
+    except Exception as e:
+        print(f"❌ Ошибка при проверке БД: {e}")
+        import traceback
+        traceback.print_exc()
+
+# Вызываем проверку БД
+try:
+    check_and_fix_db()
+except Exception as e:
+    print(f"❌ Ошибка проверки БД: {e}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=10000)
