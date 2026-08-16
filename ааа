@@ -1019,7 +1019,6 @@ async def generate_character(req: GenerateRequest, token: str):
         print("🚀 /api/generate/character вызван")
         print(f"📝 Запрос: {req.prompt}")
         print(f"🌍 World ID: {req.world_id}")
-        print(f"🔑 Токен: {token[:20]}...")
         
         user = get_user_by_token(token)
         if not user:
@@ -1090,7 +1089,7 @@ async def generate_character(req: GenerateRequest, token: str):
             ],
             temperature=0.9,
             max_tokens=4096,
-            timeout=60  # Добавляем таймаут
+            timeout=60
         )
         
         print("✅ Ответ получен от OpenAI")
@@ -1132,29 +1131,29 @@ async def generate_character(req: GenerateRequest, token: str):
         print(f"📝 Данные персонажа: {char_data}")
 
         # Сохраняем персонажа в БД
-       with SessionLocal() as db:
-    # Преобразуем key_traits в строку, если это список
-    key_traits = char_data.get('key_traits', '')
-    if isinstance(key_traits, list):
-        key_traits = ", ".join(key_traits)
-    
-    new_char = Character(
-        user_id=user.id,
-        name=char_data.get('name', 'Без имени'),
-        role=char_data.get('role', ''),
-        description=char_data.get('description', ''),
-        personality=char_data.get('personality', ''),
-        backstory=char_data.get('backstory', ''),
-        appearance=char_data.get('appearance', ''),
-        greeting=char_data.get('greeting', 'Привет!'),
-        world_id=req.world_id if hasattr(req, 'world_id') else None,
-        key_traits=key_traits  # <-- ДОБАВЬТЕ ЭТУ СТРОКУ
-    )
-    db.add(new_char)
-    db.commit()
-    db.refresh(new_char)
-    print(f"✅ Персонаж сохранён: ID={new_char.id}, Name={new_char.name}")
-    return {"success": True, "id": new_char.id, "name": new_char.name}
+        with SessionLocal() as db:
+            # Преобразуем key_traits в строку, если это список
+            key_traits = char_data.get('key_traits', '')
+            if isinstance(key_traits, list):
+                key_traits = ", ".join(key_traits)
+            
+            new_char = Character(
+                user_id=user.id,
+                name=char_data.get('name', 'Без имени'),
+                role=char_data.get('role', ''),
+                description=char_data.get('description', ''),
+                personality=char_data.get('personality', ''),
+                backstory=char_data.get('backstory', ''),
+                appearance=char_data.get('appearance', ''),
+                greeting=char_data.get('greeting', 'Привет!'),
+                world_id=req.world_id if hasattr(req, 'world_id') else None,
+                key_traits=key_traits
+            )
+            db.add(new_char)
+            db.commit()
+            db.refresh(new_char)
+            print(f"✅ Персонаж сохранён: ID={new_char.id}, Name={new_char.name}")
+            return {"success": True, "id": new_char.id, "name": new_char.name}
 
     except openai.APIError as e:
         print(f"❌ Ошибка OpenAI API: {e}")
@@ -1174,7 +1173,7 @@ async def generate_character(req: GenerateRequest, token: str):
         import traceback
         traceback.print_exc()
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
-
+        
 # --- МИРЫ ---
 
 @app.get("/api/worlds")
