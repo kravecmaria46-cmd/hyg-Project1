@@ -27,6 +27,7 @@ import openai
 import nest_asyncio
 nest_asyncio.apply()
 import asyncio
+import logging
 
 # ============================================
 # СОЗДАЕМ БАЗОВЫЙ КЛАСС ДЛЯ МОДЕЛЕЙ
@@ -60,10 +61,10 @@ def get_local_db_path():
     else:
         # Для ПК — в папке с проектом
         db_dir = os.path.dirname(os.path.abspath(__file__))
-    
+
     # Создаем папку, если её нет
     os.makedirs(db_dir, exist_ok=True)
-    
+
     return os.path.join(db_dir, 'hyg_portal.db')
 
 # ЖЕСТКО задаем локальный путь (игнорируем любые переменные)
@@ -88,8 +89,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 print(f"✅ База данных: {LOCAL_DB_PATH}")
 
 
-from sqlalchemy import text  # Добавьте в импорты в начале файла
-
 # ============================================
 # АВТОМАТИЧЕСКАЯ МИГРАЦИЯ БД
 # ============================================
@@ -103,7 +102,7 @@ def migrate_database():
             # Получаем существующие колонки
             columns = conn.execute(text("PRAGMA table_info(lore_entries)")).fetchall()
             existing = [col[1] for col in columns]
-            
+
             new_columns = {
                 "lore_type": "TEXT DEFAULT 'general'",
                 "subcategory": "TEXT",
@@ -113,7 +112,7 @@ def migrate_database():
                 "is_secret": "BOOLEAN DEFAULT 0",
                 "related_entities": "JSON"
             }
-            
+
             for name, type_ in new_columns.items():
                 if name not in existing:
                     try:
@@ -167,7 +166,7 @@ class Character(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user_id = Column(Integer, ForeignKey("users.id"))
     world_id = Column(Integer, nullable=True)
-    key_traits = Column(Text, nullable=True)  
+    key_traits = Column(Text, nullable=True)
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     faction_id = Column(Integer, ForeignKey("factions.id"), nullable=True)
     faction_rank = Column(String(50), nullable=True)  # звание/должность во фракции
@@ -244,7 +243,7 @@ class LoreEntry(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)
-    
+
     # ===== СУЩЕСТВУЮЩИЕ ПОЛЯ =====
     category = Column(String(50), nullable=True)
     tags = Column(JSON, default=list)
@@ -255,7 +254,7 @@ class LoreEntry(Base):
     character_id = Column(Integer, nullable=True)
     world_id = Column(Integer, nullable=True)
     room_id = Column(Integer, nullable=True)
-    
+
     # ===== НОВЫЕ ПОЛЯ (ДОБАВЛЯЙТЕ СЮДА) =====
     lore_type = Column(String(30), default="general")  # world, character, event, location, item, timeline
     importance = Column(Integer, default=1)  # 1-5
@@ -340,7 +339,7 @@ class MemoryHierarchy(Base):
     last_accessed = Column(DateTime, default=datetime.utcnow)
     access_count = Column(Integer, default=0)
     is_forgotten = Column(Boolean, default=False)
-    
+
 class MemoryConsolidation(Base):
     __tablename__ = "memory_consolidation"
     id = Column(Integer, primary_key=True)
@@ -356,7 +355,7 @@ class MemoryConsolidation(Base):
 
 LORE_TYPES = {
     "world": "🌍 Мир",
-    "location": "📍 Локация", 
+    "location": "📍 Локация",
     "character": "👤 Персонаж",
     "event": "⚡ Событие",
     "item": "📦 Предмет",
@@ -371,7 +370,7 @@ LORE_TYPES = {
 
 LORE_CATEGORIES = {
     "history": "📜 История мира",
-    "geography": "🌍 География", 
+    "geography": "🌍 География",
     "characters": "👤 Персонажи",
     "events": "⚡ События",
     "magic": "🔮 Магия и технологии",
@@ -385,7 +384,7 @@ LORE_CATEGORIES = {
     "general": "📝 Общее"
 }
 
-# БД с миграцией 
+# БД с миграцией
 try:
     with engine.connect() as conn:
         # Проверка тип БД
@@ -397,7 +396,7 @@ try:
                 print("✅ Колонка room_id добавлена в SQLite")
             except Exception as e:
                 print(f"ℹ️ Колонка room_id уже существует или ошибка: {e}")
-            
+
             # world_id для memory_hierarchy
             try:
                 conn.execute(text("ALTER TABLE memory_hierarchy ADD COLUMN world_id INTEGER"))
@@ -405,7 +404,7 @@ try:
                 print("✅ Колонка world_id добавлена в SQLite")
             except Exception as e:
                 print(f"ℹ️ Колонка world_id уже существует или ошибка: {e}")
-            
+
             # key_traits для characters
             try:
                 conn.execute(text("ALTER TABLE characters ADD COLUMN key_traits TEXT"))
@@ -413,7 +412,7 @@ try:
                 print("✅ Колонка key_traits добавлена в SQLite")
             except Exception as e:
                 print(f"ℹ️ Колонка key_traits уже существует или ошибка: {e}")
-            
+
         else:
             # Для PostgreSQL/MySQL с внешним ключом
             # world_id для memory_hierarchy
@@ -423,7 +422,7 @@ try:
                 print("✅ Колонка world_id добавлена")
             except Exception as e:
                 print(f"ℹ️ Колонка world_id уже существует или ошибка: {e}")
-            
+
             # key_traits для characters
             try:
                 conn.execute(text("ALTER TABLE characters ADD COLUMN key_traits TEXT"))
@@ -431,33 +430,33 @@ try:
                 print("✅ Колонка key_traits добавлена")
             except Exception as e:
                 print(f"ℹ️ Колонка key_traits уже существует или ошибка: {e}")
-            
-            # room_id для characters 
+
+            # room_id для characters
             try:
                 conn.execute(text("ALTER TABLE characters ADD COLUMN room_id INTEGER REFERENCES rooms(id)"))
                 conn.commit()
                 print("✅ Колонка room_id добавлена")
             except Exception as e:
                 print(f"ℹ️ Колонка room_id уже существует или ошибка: {e}")
-    
+
     # Создаем остальные таблицы (если их нет)
     Base.metadata.create_all(bind=engine)
     print("✅ База данных подключена")
-    
+
 except Exception as e:
     print(f"❌ Ошибка: {e}")
 
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СЕССИЙ 
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СЕССИЙ
 
 def create_session(user_id: int) -> str:
     """Создает новую сессию для пользователя"""
     token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(days=7)
-    
+
     with SessionLocal() as db:
         # УдалИ старые сессии этого пользователя
         db.query(Session).filter(Session.user_id == user_id).delete()
-        
+
         session = Session(
             user_id=user_id,
             session_token=token,
@@ -465,8 +464,8 @@ def create_session(user_id: int) -> str:
         )
         db.add(session)
         db.commit()
-    
-    return token  
+
+    return token
 
 def get_user_by_token(token: str) -> Optional[User]:
     """Получает пользователя по токену сессии"""
@@ -505,7 +504,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# питон модели 
+# питон модели
 class RegisterRequest(BaseModel):
     username: str
     password: str
@@ -525,9 +524,9 @@ class CharacterCreate(BaseModel):
     avatar: Optional[str] = None
     is_public: Optional[bool] = False
     world_id: Optional[int] = None
-    key_traits: Optional[str] = None  
+    key_traits: Optional[str] = None
     room_id: Optional[int] = None
-    faction_id: Optional[int] = None 
+    faction_id: Optional[int] = None
     faction_rank: Optional[str] = None
 
 class WorldCreate(BaseModel):
@@ -644,13 +643,13 @@ class FactionRelationshipCreate(BaseModel):
 async def upload_file(file: UploadFile = File(...)):
     try:
         ext = file.filename.split(".")[-1] if "." in file.filename else "png"
-        # это имя 
+        # это имя
         filename = f"{datetime.utcnow().timestamp()}.{ext}"
         filepath = os.path.join("uploads", filename)
-        
+
         with open(filepath, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
+
         return {"url": f"/uploads/{filename}"}
     except Exception as e:
         return JSONResponse({"error": f"Ошибка загрузки: {str(e)}"}, 500)
@@ -658,13 +657,13 @@ async def upload_file(file: UploadFile = File(...)):
 
 # API ЭНДПОИНТЫ
 
-# РЕДАКТИРОВАНИЕ СООБЩЕНИЯ 
+# РЕДАКТИРОВАНИЕ СООБЩЕНИЯ
 @app.put("/api/chat/message")
 async def edit_message(req: EditMessageRequest, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         chat_entry = db.query(ChatHistory).filter(
             ChatHistory.id == req.message_id,
@@ -692,38 +691,38 @@ async def edit_message(req: EditMessageRequest, token: str):
             "old_content": old_content
         }
 
-# АВТОРИЗАЦИЯ 
+# АВТОРИЗАЦИЯ
 
 @app.post("/api/register")
 async def register(req: RegisterRequest):
     with SessionLocal() as db:
         if db.query(User).filter(User.username == req.username).first():
             return JSONResponse({"error": "Имя уже занято"}, 400)
-        
+
         hashed = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt())
         user = User(username=req.username, password_hash=hashed.decode(), display_name=req.username)
         db.add(user)
         db.commit()
         db.refresh(user)
-        
+
         user_id = user.id
         username = user.username
-        
+
         # Создаем дефолтную персону
         persona = Persona(name=req.username, user_id=user_id)
         db.add(persona)
         db.commit()
         db.refresh(persona)
-        
+
         user.active_persona_id = persona.id
         db.commit()
-    
+
     # Создание сессии (отдельно, с своей сессией)
     token = create_session(user_id)
-    
+
     return {
-        "success": True, 
-        "user_id": user_id, 
+        "success": True,
+        "user_id": user_id,
         "username": username,
         "token": token
     }
@@ -736,15 +735,15 @@ async def login(req: LoginRequest):
             return JSONResponse({"error": "Пользователь не найден"}, 404)
         if not bcrypt.checkpw(req.password.encode(), user.password_hash.encode()):
             return JSONResponse({"error": "Неверный пароль"}, 401)
-        
+
         user_id = user.id
         username = user.username
-    
+
     token = create_session(user_id)
-    
+
     return {
-        "success": True, 
-        "user_id": user_id, 
+        "success": True,
+        "user_id": user_id,
         "username": username,
         "token": token
     }
@@ -754,14 +753,14 @@ async def logout(token: str):
     delete_session(token)
     return {"success": True}
 
-#  ПЕРСОНАЖИ 
+#  ПЕРСОНАЖИ
 
 @app.get("/api/characters")
 async def get_characters(token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         chars = db.query(Character).filter(Character.user_id == user.id).all()
         return [{
@@ -769,7 +768,9 @@ async def get_characters(token: str):
             "description": c.description, "personality": c.personality,
             "backstory": c.backstory, "appearance": c.appearance,
             "greeting": c.greeting, "avatar": c.avatar,
-            "is_public": c.is_public, "world_id": c.world_id
+            "is_public": c.is_public, "world_id": c.world_id,
+            "key_traits": c.key_traits,  # <-- ДОБАВЬТЕ
+            "room_id": c.room_id         # <-- ДОБАВЬТЕ
         } for c in chars]
 
 
@@ -778,7 +779,7 @@ async def create_character(char: CharacterCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         new_char = Character(**char.dict(), user_id=user.id)
         db.add(new_char)
@@ -791,12 +792,12 @@ async def update_character(char_id: int, char: CharacterCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         existing = db.query(Character).filter(Character.id == char_id, Character.user_id == user.id).first()
         if not existing:
             return JSONResponse({"error": "Персонаж не найден или не принадлежит вам"}, 404)
-        
+
         for key, value in char.dict().items():
             setattr(existing, key, value)
         existing.updated_at = datetime.utcnow()
@@ -809,7 +810,7 @@ async def get_character(char_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         char = db.query(Character).filter(Character.id == char_id, Character.user_id == user.id).first()
         if not char:
@@ -833,7 +834,7 @@ async def delete_character(char_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         char = db.query(Character).filter(Character.id == char_id, Character.user_id == user.id).first()
         if not char:
@@ -850,7 +851,7 @@ async def get_character_relationships(character_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         # Проверяем, что персонаж принадлежит пользователю
         character = db.query(Character).filter(
@@ -859,11 +860,11 @@ async def get_character_relationships(character_id: int, token: str):
         ).first()
         if not character:
             return JSONResponse({"error": "Персонаж не найден"}, 404)
-        
+
         relationships = db.query(CharacterRelationship).filter(
             CharacterRelationship.character_id == character_id
         ).all()
-        
+
         result = []
         for rel in relationships:
             related = db.query(Character).filter(Character.id == rel.related_character_id).first()
@@ -877,7 +878,7 @@ async def get_character_relationships(character_id: int, token: str):
                 "strength": rel.strength,
                 "created_at": rel.created_at
             })
-        
+
         return result
 
 @app.post("/api/characters/relationships")
@@ -886,7 +887,7 @@ async def create_relationship(rel: RelationshipCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         # Проверяем, что оба персонажа принадлежат пользователю
         char1 = db.query(Character).filter(
@@ -895,23 +896,23 @@ async def create_relationship(rel: RelationshipCreate, token: str):
         ).first()
         if not char1:
             return JSONResponse({"error": "Первый персонаж не найден"}, 404)
-        
+
         char2 = db.query(Character).filter(
             Character.id == rel.related_character_id,
             Character.user_id == user.id
         ).first()
         if not char2:
             return JSONResponse({"error": "Второй персонаж не найден"}, 404)
-        
+
         # Проверяем, не существует ли уже такая связь
         existing = db.query(CharacterRelationship).filter(
             CharacterRelationship.character_id == rel.character_id,
             CharacterRelationship.related_character_id == rel.related_character_id
         ).first()
-        
+
         if existing:
             return JSONResponse({"error": "Связь уже существует"}, 400)
-        
+
         new_rel = CharacterRelationship(
             character_id=rel.character_id,
             related_character_id=rel.related_character_id,
@@ -922,7 +923,7 @@ async def create_relationship(rel: RelationshipCreate, token: str):
         db.add(new_rel)
         db.commit()
         db.refresh(new_rel)
-        
+
         return {"id": new_rel.id, "success": True}
 
 @app.put("/api/characters/relationships/{rel_id}")
@@ -931,15 +932,15 @@ async def update_relationship(rel_id: int, rel: RelationshipCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         existing = db.query(CharacterRelationship).filter(
             CharacterRelationship.id == rel_id
         ).first()
-        
+
         if not existing:
             return JSONResponse({"error": "Связь не найдена"}, 404)
-        
+
         # Проверяем, что персонажи принадлежат пользователю
         char1 = db.query(Character).filter(
             Character.id == existing.character_id,
@@ -947,15 +948,15 @@ async def update_relationship(rel_id: int, rel: RelationshipCreate, token: str):
         ).first()
         if not char1:
             return JSONResponse({"error": "Персонаж не найден"}, 404)
-        
+
         existing.relationship_type = rel.relationship_type
         existing.description = rel.description
         existing.strength = rel.strength or 5
         existing.updated_at = datetime.utcnow()
-        
+
         db.commit()
         db.refresh(existing)
-        
+
         return {"success": True}
 
 @app.delete("/api/characters/relationships/{rel_id}")
@@ -964,15 +965,15 @@ async def delete_relationship(rel_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         rel = db.query(CharacterRelationship).filter(
             CharacterRelationship.id == rel_id
         ).first()
-        
+
         if not rel:
             return JSONResponse({"error": "Связь не найдена"}, 404)
-        
+
         # Проверяем, что персонаж принадлежит пользователю
         character = db.query(Character).filter(
             Character.id == rel.character_id,
@@ -980,10 +981,10 @@ async def delete_relationship(rel_id: int, token: str):
         ).first()
         if not character:
             return JSONResponse({"error": "Персонаж не найден"}, 404)
-        
+
         db.delete(rel)
         db.commit()
-        
+
         return {"success": True}
 
 @app.get("/api/characters/relationship-types")
@@ -1016,39 +1017,39 @@ async def generate_character(req: GenerateRequest, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     api_keys = user.api_keys or {}
     api_key = api_keys.get("polza") or POLZA_API_KEY
     model = api_keys.get("model") or POLZA_MODEL
-    
+
     if not api_key or api_key == "your-default-api-key-here":
         return JSONResponse({
             "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
         }, 400)
-    
+
     openai.api_key = api_key
     openai.base_url = "https://polza.ai/api/v1/"
-    
+
     # короткий или длинный
     is_short = len(req.prompt.split()) < 10
-    
+
     if is_short:
         system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
         Пользователь дал КОРОТКИЙ запрос. Твоя задача:
         1. Распознать персонажа
         2. Додумать недостающие детали (характер, внешность, предыстория)
         3. Сделать персонажа ЖИВЫМ и ИНТЕРЕСНЫМ
-        
+
         Сгенерируй персонажа в формате JSON с полями:
         name, role, description, personality, backstory, appearance, greeting.
-        
+
         Заполни ВСЕ поля качественно и подробно!
         description - минимум 2-3 предложения.
         personality - минимум 2-3 предложения.
         backstory - минимум 3-4 предложения.
         appearance - минимум 2 предложения.
         greeting - первое сообщение персонажа.
-        
+
         ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
         ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
     else:
@@ -1057,15 +1058,15 @@ async def generate_character(req: GenerateRequest, token: str):
         1. Точно следовать всем указаниям пользователя
         2. Не добавлять ничего от себя
         3. Сохранить все детали из запроса
-        
+
         Сгенерируй персонажа в формате JSON с полями:
         name, role, description, personality, backstory, appearance, greeting.
-        
+
         Заполни ВСЕ поля качественно и подробно!
-        
+
         ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
         ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
-    
+
     try:
         response = openai.chat.completions.create(
             model=model,
@@ -1077,7 +1078,7 @@ async def generate_character(req: GenerateRequest, token: str):
             max_tokens=4096
         )
         result = response.choices[0].message.content
-        
+
         # Пробуем найти JSON в ответе
         import re
         json_match = re.search(r'\{.*\}', result, re.DOTALL)
@@ -1106,7 +1107,7 @@ async def generate_character(req: GenerateRequest, token: str):
                 "appearance": "Не указана",
                 "greeting": "Привет! Я новый персонаж."
             }
-        
+
         # Сохраняем персонажа в БД
         with SessionLocal() as db:
             new_char = Character(
@@ -1124,10 +1125,10 @@ async def generate_character(req: GenerateRequest, token: str):
             db.commit()
             db.refresh(new_char)
             return {"success": True, "id": new_char.id, "name": new_char.name}
-            
+
     except Exception as e:
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
-        
+
 # --- МИРЫ ---
 
 @app.get("/api/worlds")
@@ -1135,7 +1136,7 @@ async def get_worlds(token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         worlds = db.query(World).filter(World.created_by == user.id).all()
         return [{
@@ -1149,7 +1150,7 @@ async def create_world(world: WorldCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         new_world = World(
             name=world.name,
@@ -1171,12 +1172,12 @@ async def update_world(world_id: int, world: WorldCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         existing = db.query(World).filter(World.id == world_id, World.created_by == user.id).first()
         if not existing:
             return JSONResponse({"error": "Мир не найден или не принадлежит вам"}, 404)
-        
+
         existing.name = world.name
         existing.description = world.description
         existing.genre = world.genre
@@ -1194,7 +1195,7 @@ async def get_world(world_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         world = db.query(World).filter(World.id == world_id, World.created_by == user.id).first()
         if not world:
@@ -1215,7 +1216,7 @@ async def delete_world(world_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         world = db.query(World).filter(World.id == world_id, World.created_by == user.id).first()
         if not world:
@@ -1234,13 +1235,13 @@ async def get_factions(token: str, world_id: Optional[int] = None):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         query = db.query(Faction).filter(Faction.user_id == user.id)
         if world_id:
             query = query.filter(Faction.world_id == world_id)
         factions = query.order_by(Faction.name).all()
-        
+
         return [{
             "id": f.id,
             "name": f.name,
@@ -1262,7 +1263,7 @@ async def create_faction(faction: FactionCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         # Проверяем, что мир принадлежит пользователю
         world = db.query(World).filter(
@@ -1271,7 +1272,7 @@ async def create_faction(faction: FactionCreate, token: str):
         ).first()
         if not world:
             return JSONResponse({"error": "Мир не найден"}, 404)
-        
+
         new_faction = Faction(
             **faction.dict(),
             user_id=user.id
@@ -1279,7 +1280,7 @@ async def create_faction(faction: FactionCreate, token: str):
         db.add(new_faction)
         db.commit()
         db.refresh(new_faction)
-        
+
         return {"id": new_faction.id, "name": new_faction.name, "success": True}
 
 
@@ -1289,32 +1290,32 @@ async def get_faction(faction_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         faction = db.query(Faction).filter(
             Faction.id == faction_id,
             Faction.user_id == user.id
         ).first()
-        
+
         if not faction:
             return JSONResponse({"error": "Фракция не найдена"}, 404)
-        
+
         # Получаем лидера
         leader = None
         if faction.leader_id:
             leader = db.query(Character).filter(Character.id == faction.leader_id).first()
-        
+
         # Получаем членов фракции
         members = db.query(Character).filter(
             Character.faction_id == faction_id,
             Character.user_id == user.id
         ).all()
-        
+
         # Получаем связи с другими фракциями
         relationships = db.query(FactionRelationship).filter(
             FactionRelationship.faction_id == faction_id
         ).all()
-        
+
         rel_list = []
         for rel in relationships:
             related = db.query(Faction).filter(Faction.id == rel.related_faction_id).first()
@@ -1326,7 +1327,7 @@ async def get_faction(faction_id: int, token: str):
                 "description": rel.description,
                 "strength": rel.strength
             })
-        
+
         return {
             "id": faction.id,
             "name": faction.name,
@@ -1360,23 +1361,23 @@ async def update_faction(faction_id: int, faction: FactionCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         existing = db.query(Faction).filter(
             Faction.id == faction_id,
             Faction.user_id == user.id
         ).first()
-        
+
         if not existing:
             return JSONResponse({"error": "Фракция не найдена"}, 404)
-        
+
         for key, value in faction.dict().items():
             setattr(existing, key, value)
         existing.updated_at = datetime.utcnow()
-        
+
         db.commit()
         db.refresh(existing)
-        
+
         return {"success": True}
 
 
@@ -1386,29 +1387,29 @@ async def delete_faction(faction_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         faction = db.query(Faction).filter(
             Faction.id == faction_id,
             Faction.user_id == user.id
         ).first()
-        
+
         if not faction:
             return JSONResponse({"error": "Фракция не найдена"}, 404)
-        
+
         # Удаляем связи
         db.query(FactionRelationship).filter(
             FactionRelationship.faction_id == faction_id
         ).delete()
-        
+
         # Отвязываем персонажей
         db.query(Character).filter(Character.faction_id == faction_id).update(
             {"faction_id": None, "faction_rank": None}
         )
-        
+
         db.delete(faction)
         db.commit()
-        
+
         return {"success": True}
 
 
@@ -1422,7 +1423,7 @@ async def create_faction_relationship(rel: FactionRelationshipCreate, token: str
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         # Проверяем, что обе фракции принадлежат пользователю
         f1 = db.query(Faction).filter(
@@ -1431,23 +1432,23 @@ async def create_faction_relationship(rel: FactionRelationshipCreate, token: str
         ).first()
         if not f1:
             return JSONResponse({"error": "Фракция не найдена"}, 404)
-        
+
         f2 = db.query(Faction).filter(
             Faction.id == rel.related_faction_id,
             Faction.user_id == user.id
         ).first()
         if not f2:
             return JSONResponse({"error": "Связанная фракция не найдена"}, 404)
-        
+
         # Проверяем дубликат
         existing = db.query(FactionRelationship).filter(
             FactionRelationship.faction_id == rel.faction_id,
             FactionRelationship.related_faction_id == rel.related_faction_id
         ).first()
-        
+
         if existing:
             return JSONResponse({"error": "Связь уже существует"}, 400)
-        
+
         new_rel = FactionRelationship(
             faction_id=rel.faction_id,
             related_faction_id=rel.related_faction_id,
@@ -1457,7 +1458,7 @@ async def create_faction_relationship(rel: FactionRelationshipCreate, token: str
         )
         db.add(new_rel)
         db.commit()
-        
+
         return {"success": True}
 
 
@@ -1467,15 +1468,15 @@ async def delete_faction_relationship(rel_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         rel = db.query(FactionRelationship).filter(
             FactionRelationship.id == rel_id
         ).first()
-        
+
         if not rel:
             return JSONResponse({"error": "Связь не найдена"}, 404)
-        
+
         # Проверяем, что фракция принадлежит пользователю
         faction = db.query(Faction).filter(
             Faction.id == rel.faction_id,
@@ -1483,10 +1484,10 @@ async def delete_faction_relationship(rel_id: int, token: str):
         ).first()
         if not faction:
             return JSONResponse({"error": "Фракция не найдена"}, 404)
-        
+
         db.delete(rel)
         db.commit()
-        
+
         return {"success": True}
 
 
@@ -1512,7 +1513,7 @@ async def get_personas(token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         try:
             personas = db.query(Persona).filter(Persona.user_id == user.id).all()
@@ -1538,7 +1539,7 @@ async def create_persona(persona: PersonaCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         new_persona = Persona(**persona.dict(), user_id=user.id)
         db.add(new_persona)
@@ -1554,12 +1555,12 @@ async def update_persona(persona_id: int, persona: PersonaCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         existing = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user.id).first()
         if not existing:
             return JSONResponse({"error": "Персона не найдена или не принадлежит вам"}, 404)
-        
+
         for key, value in persona.dict().items():
             setattr(existing, key, value)
         existing.updated_at = datetime.utcnow()
@@ -1572,7 +1573,7 @@ async def get_persona(persona_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user.id).first()
         if not persona:
@@ -1596,7 +1597,7 @@ async def activate_persona(persona_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user.id).first()
         if not persona:
@@ -1610,7 +1611,7 @@ async def delete_persona(persona_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         persona = db.query(Persona).filter(Persona.id == persona_id, Persona.user_id == user.id).first()
         if not persona:
@@ -1626,7 +1627,7 @@ async def get_memory(token: str, character_id: Optional[int] = None):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         query = db.query(Memory).filter(Memory.user_id == user.id)
         if character_id:
@@ -1643,7 +1644,7 @@ async def create_lore(lore: LoreCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         new_lore = LoreEntry(**lore.dict(), user_id=user.id)
         db.add(new_lore)
@@ -1656,7 +1657,7 @@ async def delete_memory(memory_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         memory = db.query(Memory).filter(Memory.id == memory_id, Memory.user_id == user.id).first()
         if not memory:
@@ -1672,7 +1673,7 @@ async def get_lore(token: str, search: Optional[str] = None):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         query = db.query(LoreEntry).filter(LoreEntry.user_id == user.id)
         if search:
@@ -1704,7 +1705,7 @@ async def create_lore(lore: LoreCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         new_lore = LoreEntry(**lore.dict(), user_id=user.id)
         db.add(new_lore)
@@ -1717,12 +1718,12 @@ async def update_lore(lore_id: int, lore: LoreCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         existing = db.query(LoreEntry).filter(LoreEntry.id == lore_id, LoreEntry.user_id == user.id).first()
         if not existing:
             return JSONResponse({"error": "Запись не найдена"}, 404)
-        
+
         for key, value in lore.dict().items():
             setattr(existing, key, value)
         existing.updated_at = datetime.utcnow()
@@ -1735,7 +1736,7 @@ async def delete_lore(lore_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         lore = db.query(LoreEntry).filter(LoreEntry.id == lore_id, LoreEntry.user_id == user.id).first()
         if not lore:
@@ -1754,13 +1755,13 @@ async def get_lore_by_world(world_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         lore = db.query(LoreEntry).filter(
             LoreEntry.world_id == world_id,
             LoreEntry.user_id == user.id
         ).order_by(LoreEntry.category, LoreEntry.title).all()
-        
+
         # Группируем по категориям
         grouped = {}
         for entry in lore:
@@ -1774,7 +1775,7 @@ async def get_lore_by_world(world_id: int, token: str):
                 "lore_type": entry.lore_type,
                 "importance": entry.importance
             })
-        
+
         return grouped
 
 @app.get("/api/lore/timeline/{world_id}")
@@ -1783,14 +1784,14 @@ async def get_lore_timeline(world_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         events = db.query(LoreEntry).filter(
             LoreEntry.world_id == world_id,
             LoreEntry.lore_type == "timeline",
             LoreEntry.user_id == user.id
         ).order_by(LoreEntry.timeline_date).all()
-        
+
         return [{
             "id": e.id,
             "title": e.title,
@@ -1799,14 +1800,14 @@ async def get_lore_timeline(world_id: int, token: str):
             "importance": e.importance
         } for e in events]
 
-#  КОМНАТЫ 
+#  КОМНАТЫ
 
 @app.get("/api/rooms")
 async def get_rooms(token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         rooms = db.query(Room).filter(Room.owner_id == user.id).all()
         return [{
@@ -1820,7 +1821,7 @@ async def create_room(room: RoomCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         new_room = Room(**room.dict(), owner_id=user.id, members=[user.id])
         db.add(new_room)
@@ -1833,7 +1834,7 @@ async def delete_room(room_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
         if not room:
@@ -1847,12 +1848,12 @@ async def update_room(room_id: int, room: RoomCreate, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         existing = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
         if not existing:
             return JSONResponse({"error": "Комната не найдена"}, 404)
-        
+
         existing.name = room.name
         existing.description = room.description
         existing.world_id = room.world_id
@@ -1867,7 +1868,7 @@ async def add_room_member(room_id: int, member_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
         if not room:
@@ -1884,7 +1885,7 @@ async def remove_room_member(room_id: int, member_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
         if not room:
@@ -1895,23 +1896,23 @@ async def remove_room_member(room_id: int, member_id: int, token: str):
             room.members = members
             db.commit()
         return {"success": True}
-    
+
 @app.get("/api/rooms/{room_id}/characters")
 async def get_room_characters(room_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
         if not room:
             return JSONResponse({"error": "Комната не найдена"}, 404)
-        
+
         chars = db.query(Character).filter(
             Character.room_id == room_id,
             Character.user_id == user.id
         ).all()
-        
+
         return [{
             "id": c.id,
             "name": c.name,
@@ -1927,31 +1928,31 @@ async def add_room_character(room_id: int, req: dict, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     character_id = req.get('character_id')
     if not character_id:
         return JSONResponse({"error": "Не указан character_id"}, 400)
-    
+
     with SessionLocal() as db:
         room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
         if not room:
             return JSONResponse({"error": "Комната не найдена"}, 404)
-        
+
         character = db.query(Character).filter(
             Character.id == character_id,
             Character.user_id == user.id
         ).first()
-        
+
         if not character:
             return JSONResponse({"error": "Персонаж не найден"}, 404)
-        
+
         existing_count = db.query(Character).filter(Character.room_id == room_id).count()
         if existing_count >= 100:
             return JSONResponse({"error": "В комнате может быть не более 100 персонажей"}, 400)
-        
+
         character.room_id = room_id
         db.commit()
-        
+
         return {"success": True}
 
 # ============================================
@@ -1964,24 +1965,24 @@ async def room_chat(room_id: int, message: str, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
         if not room:
             return JSONResponse({"error": "Комната не найдена"}, 404)
-        
+
         characters = db.query(Character).filter(
             Character.room_id == room_id,
             Character.user_id == user.id
         ).limit(100).all()
-        
+
         if not characters:
             return JSONResponse({"error": "В комнате нет персонажей"}, 400)
-        
+
         persona = None
         if user.active_persona_id:
             persona = db.query(Persona).filter(Persona.id == user.active_persona_id).first()
-        
+
         user_msg = RoomChatMessage(
             room_id=room_id,
             user_id=user.id,
@@ -1992,7 +1993,7 @@ async def room_chat(room_id: int, message: str, token: str):
         )
         db.add(user_msg)
         db.commit()
-        
+
         responses = []
         for character in characters:
             context = get_room_context(room_id, character.id, limit=20)
@@ -2003,7 +2004,7 @@ async def room_chat(room_id: int, message: str, token: str):
                 context=context,
                 room_context=True
             )
-            
+
             char_msg = RoomChatMessage(
                 room_id=room_id,
                 user_id=user.id,
@@ -2020,7 +2021,7 @@ async def room_chat(room_id: int, message: str, token: str):
                 "avatar": character.avatar,
                 "response": bot_response
             })
-        
+
         db.commit()
         return {"user_message": message, "responses": responses}
 
@@ -2031,17 +2032,17 @@ async def get_room_chat_history(room_id: int, token: str, limit: int = 50):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         room = db.query(Room).filter(Room.id == room_id, Room.owner_id == user.id).first()
         if not room:
             return JSONResponse({"error": "Комната не найдена"}, 404)
-        
+
         messages = db.query(RoomChatMessage).filter(
             RoomChatMessage.room_id == room_id
         ).order_by(RoomChatMessage.timestamp.desc()).limit(limit).all()
         messages.reverse()
-        
+
         result = []
         for m in messages:
             avatar = None
@@ -2058,7 +2059,7 @@ async def get_room_chat_history(room_id: int, token: str, limit: int = 50):
                 "avatar": avatar
             })
         return result
-# API КЛЮЧИ 
+# API КЛЮЧИ
 
 @app.get("/api/keys")
 async def get_api_keys(token: str):
@@ -2072,7 +2073,7 @@ async def update_api_keys(keys_data: ApiKeysUpdate, token: str):
     user = get_user_by_token(token)
     if not user:
         raise HTTPException(401, "Не авторизован")
-    
+
     with SessionLocal() as db:
         db_user = db.query(User).filter(User.id == user.id).first()
         if not db_user:
@@ -2081,14 +2082,14 @@ async def update_api_keys(keys_data: ApiKeysUpdate, token: str):
         db.commit()
         return {"success": True}
 
-#  ПРОФИЛЬ 
+#  ПРОФИЛЬ
 
 @app.get("/api/profile")
 async def get_profile(token: str):
     user = get_user_by_token(token)
     if not user:
         raise HTTPException(401, "Не авторизован")
-    
+
     return {
         "username": user.username,
         "display_name": user.display_name or user.username,
@@ -2106,7 +2107,7 @@ async def update_profile(
     user = get_user_by_token(token)
     if not user:
         raise HTTPException(401, "Не авторизован")
-    
+
     with SessionLocal() as db:
         db_user = db.query(User).filter(User.id == user.id).first()
         if not db_user:
@@ -2119,7 +2120,7 @@ async def update_profile(
             db_user.avatar = avatar
         db.commit()
         return {"success": True}
-        
+
         # УДАЛЕНИЕ АККАУНТА
 
 @app.delete("/api/account")
@@ -2128,51 +2129,51 @@ async def delete_account(token: str):
     user = get_user_by_token(token)
     if not user:
         raise HTTPException(401, "Не авторизован")
-    
+
     with SessionLocal() as db:
         user_id = user.id
-        
+
         # Удаляем все данные пользователя в правильном порядке (сначала зависимые)
-        
+
         # 1. Сессии
         db.query(Session).filter(Session.user_id == user_id).delete()
-        
+
         # 2. Чаты
         db.query(ChatHistory).filter(ChatHistory.user_id == user_id).delete()
-        
+
         # 3. Память (иерархическая)
         db.query(MemoryHierarchy).filter(MemoryHierarchy.user_id == user_id).delete()
-        
+
         # 4. Консолидация памяти
         db.query(MemoryConsolidation).filter(MemoryConsolidation.user_id == user_id).delete()
-        
+
         # 5. Обычная память
         db.query(Memory).filter(Memory.user_id == user_id).delete()
-        
+
         # 6. Факты о пользователе
         db.query(UserMemory).filter(UserMemory.user_id == user_id).delete()
-        
+
         # 7. Лорбук
         db.query(LoreEntry).filter(LoreEntry.user_id == user_id).delete()
-        
+
         # 8. Комнаты
         db.query(Room).filter(Room.owner_id == user_id).delete()
-        
+
         # 9. Миры
         db.query(World).filter(World.created_by == user_id).delete()
-        
+
         # 10. Персоны
         db.query(Persona).filter(Persona.user_id == user_id).delete()
-        
+
         # 11. Персонажи (сначала удаляем, т.к. на них ссылаются другие таблицы)
         # Но т.к. другие таблицы уже удалены, можно удалять
         db.query(Character).filter(Character.user_id == user_id).delete()
-        
+
         # 12. Сам пользователь
         db.delete(user)
-        
+
         db.commit()
-        
+
         return {"success": True, "message": "Аккаунт удалён"}
 
 # ============================================
@@ -2182,22 +2183,22 @@ def analyze_personality_style(character):
     """Анализирует характер персонажа и возвращает стиль общения"""
     style = ""
     personality = character.personality or ""
-    
+
     if any(word in personality.lower() for word in ["весел", "жизнерад", "оптимист", "шут"]):
         style += "\n- Ты часто шутишь и улыбаешься, даже в серьёзных ситуациях."
-    
+
     if any(word in personality.lower() for word in ["мрач", "серьёз", "суров", "угрюм"]):
         style += "\n- Ты редко улыбаешься, говоришь сдержанно и весомо."
-    
+
     if any(word in personality.lower() for word in ["романтик", "нежн", "ласков"]):
         style += "\n- Ты склонен к романтике, используешь красивые сравнения."
-    
+
     if any(word in personality.lower() for word in ["резк", "прям", "груб"]):
         style += "\n- Ты говоришь прямо и резко, не выбирая выражений."
-    
+
     if any(word in personality.lower() for word in ["умн", "интеллектуал", "книг"]):
         style += "\n- Ты используешь сложные фразы, цитируешь книги."
-    
+
     return style
 
 
@@ -2212,16 +2213,16 @@ def check_canon_compliance(response: str, character) -> tuple:
     """
     if not character.key_traits:
         return True, "Нет ключевых черт"
-    
+
     key_traits = character.key_traits.lower().split(',')
     key_traits = [t.strip() for t in key_traits if t.strip()]
-    
+
     if not key_traits:
         return True, "Нет ключевых черт"
-    
+
     violations = []
     response_lower = response.lower()
-    
+
     for trait in key_traits:
         if trait.startswith("не "):
             trait_clean = trait[3:]
@@ -2231,16 +2232,16 @@ def check_canon_compliance(response: str, character) -> tuple:
             trait_words = trait.split()
             if len(trait_words) > 1:
                 continue
-    
+
     if "я не могу" in response_lower and "персонаж" in response_lower:
         violations.append("Выход из роли (упоминание себя как персонажа)")
-    
+
     if "извини" in response_lower and "бот" in response_lower:
         violations.append("Выход из роли (упоминание себя как бота)")
-    
+
     if len(violations) > 0:
         return False, violations
-    
+
     return True, "OK"
 
 
@@ -2253,7 +2254,7 @@ async def chat(chat_req: ChatRequest, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         character = db.query(Character).filter(Character.id == chat_req.character_id).first()
         if not character or (character.user_id != user.id and not character.is_public):
@@ -2444,7 +2445,7 @@ async def chat(chat_req: ChatRequest, token: str):
 "Привет! Как дела? Я рад тебя видеть."
 
 ✅ ХОРОШИЙ ОТВЕТ (живой, с описанием):
-*Он слегка улыбнулся, откинувшись на спинку стула. В комнате слышно только тиканье старых часов.* 
+*Он слегка улыбнулся, откинувшись на спинку стула. В комнате слышно только тиканье старых часов.*
 "Ну вот, наконец-то ты пришёл. Я уже начал думать, что ты забыл дорогу."
 
 ❌ ПЛОХОЙ ОТВЕТ (без эмоций):
@@ -2457,7 +2458,7 @@ async def chat(chat_req: ChatRequest, token: str):
 "Мне страшно."
 
 ✅ ХОРОШИЙ ОТВЕТ (с окружением):
-*Сердце забилось быстрее. Он сжал край стола, всматриваясь в темноту за окном.* 
+*Сердце забилось быстрее. Он сжал край стола, всматриваясь в темноту за окном.*
 "Мне кажется, там кто-то есть..."
 """
         # ===========================================
@@ -2504,7 +2505,7 @@ async def chat(chat_req: ChatRequest, token: str):
         api_keys = user.api_keys or {}
         api_key = api_keys.get("polza") or POLZA_API_KEY
         model = api_keys.get("model") or POLZA_MODEL
-        
+
         if not api_key or api_key == "your-default-api-key-here":
             return JSONResponse({
                 "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
@@ -2527,19 +2528,19 @@ async def chat(chat_req: ChatRequest, token: str):
             bot_response = response.choices[0].message.content
             # ===== ПРОВЕРКА КАНОНА =====
             is_canon, reason = check_canon_compliance(bot_response, character)
-            
+
             if not is_canon:
                 print(f"⚠️ Нарушение канона: {reason}")
-                
+
                 # Собираем сообщения для повторной генерации
                 system_prompt_canon = system_prompt + f"\n\n⚠️ ВАЖНО! Твой предыдущий ответ нарушил канон. Нарушения: {', '.join(reason) if isinstance(reason, list) else reason}. Пожалуйста, ответь снова, сохраняя свой характер!"
-                
+
                 messages_canon = [{"role": "system", "content": system_prompt_canon}]
                 for h in history:
                     messages_canon.append({"role": "user", "content": h.user_message})
                     messages_canon.append({"role": "assistant", "content": h.bot_response})
                 messages_canon.append({"role": "user", "content": chat_req.message})
-                
+
                 response_canon = openai.chat.completions.create(
                     model=model,
                     messages=messages_canon,
@@ -2549,18 +2550,18 @@ async def chat(chat_req: ChatRequest, token: str):
                 bot_response = response_canon.choices[0].message.content
                 print("✅ Ответ перегенерирован с соблюдением канона")
             # ===================================
-            
+
         except Exception as e:
             bot_response = f"Ошибка AI: {str(e)}"
-            
+
             # ===== АВТО-ДЕТЕКТ ПУСТЫХ ОТВЕТОВ =====
             # Если ответ пустой или шаблонный - перегенерируем
             if is_empty_response(bot_response):
                 print(f"⚠️ Обнаружен пустой ответ, перегенерируем...")
-                
+
                 # Повышаем температуру для креативности
                 retry_temperature = min(temperature + 0.3, 1.5)
-                
+
                 response2 = openai.chat.completions.create(
                     model=model,
                     messages=messages,
@@ -2568,14 +2569,14 @@ async def chat(chat_req: ChatRequest, token: str):
                     max_tokens=max_tokens
                 )
                 bot_response = response2.choices[0].message.content
-                
+
                 # Если всё ещё пустой - используем запасной ответ
                 if is_empty_response(bot_response):
-                    bot_response = """*Он задумчиво посмотрел вдаль, собираясь с мыслями.* 
+                    bot_response = """*Он задумчиво посмотрел вдаль, собираясь с мыслями.*
 "Извини, я немного задумался. Давай продолжим. Что ты хотел сказать?"""
                     print("⚠️ Использован запасной ответ")
             # =======================================
-            
+
         except Exception as e:
             bot_response = f"Ошибка AI: {str(e)}"
         chat_entry = ChatHistory(
@@ -2587,11 +2588,11 @@ async def chat(chat_req: ChatRequest, token: str):
         )
         db.add(chat_entry)
         db.commit()
-        
+
          # ===== АВТО-СОХРАНЕНИЕ ВАЖНЫХ МОМЕНТОВ =====
         important_keywords = ["важно", "запомни", "никогда не забывай", "ключевой момент", "это важно", "запомни это"]
         is_important = len(chat_req.message) > 50 or any(word in chat_req.message.lower() for word in important_keywords)
-        
+
         if is_important:
             memory = Memory(
                 content=f"⭐ Важно: {chat_req.message[:200]}...",
@@ -2625,7 +2626,7 @@ async def chat(chat_req: ChatRequest, token: str):
             )
             db.add(memory)
             db.commit()
-            
+
                             # ========== СОХРАНЯЕМ В ИЕРАРХИЧЕСКУЮ ПАМЯТЬ ==========
         save_hierarchical_memory(
             user_id=user.id,
@@ -2650,7 +2651,7 @@ async def regenerate(req: RegenerateRequest, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         character = db.query(Character).filter(Character.id == req.character_id).first()
         if not character or (character.user_id != user.id and not character.is_public):
@@ -2714,7 +2715,7 @@ async def regenerate(req: RegenerateRequest, token: str):
         api_keys = user.api_keys or {}
         api_key = api_keys.get("polza") or POLZA_API_KEY
         model = api_keys.get("model") or POLZA_MODEL
-        
+
         if not api_key or api_key == "your-default-api-key-here":
             return JSONResponse({
                 "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
@@ -2756,7 +2757,7 @@ async def get_chat_history(token: str, character_id: int, limit: int = 50):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         character = db.query(Character).filter(Character.id == character_id).first()
         if not character or (character.user_id != user.id and not character.is_public):
@@ -2767,7 +2768,7 @@ async def get_chat_history(token: str, character_id: int, limit: int = 50):
             ChatHistory.user_id == user.id,
             ChatHistory.user_message != "__SESSION_START__"
         ).order_by(ChatHistory.timestamp.asc()).limit(limit).all()
-        
+
         result = []
         for h in history:
             result.append({
@@ -2789,7 +2790,7 @@ async def clear_chat(character_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         character = db.query(Character).filter(Character.id == character_id).first()
         if not character or (character.user_id != user.id and not character.is_public):
@@ -2800,20 +2801,20 @@ async def clear_chat(character_id: int, token: str):
             ChatHistory.character_id == character_id,
             ChatHistory.user_id == user.id
         ).delete()
-        
+
         # Удаляем связанную память
         db.query(Memory).filter(
             Memory.character_id == character_id,
             Memory.user_id == user.id
         ).delete()
-        
+
         db.commit()
 
         return {
             "success": True,
             "message": "Чат удалён"
         }
-        
+
         # --- УДАЛЕНИЕ КОНКРЕТНОГО ДИАЛОГА (СЕССИИ) ---
 
 @app.delete("/api/chat/session/{session_id}")
@@ -2822,22 +2823,22 @@ async def delete_chat_session(session_id: int, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         # Проверяем, что сессия принадлежит пользователю
         chat = db.query(ChatHistory).filter(
             ChatHistory.id == session_id,
             ChatHistory.user_id == user.id
         ).first()
-        
+
         if not chat:
             return JSONResponse({"error": "Диалог не найден"}, 404)
-        
+
         # Находим все сообщения в этой сессии
         # Сессия определяется по character_id и timestamp
         # Ищем все сообщения с этим character_id, начиная с этого сообщения
         session_start = chat.timestamp
-        
+
         # Удаляем все сообщения этой сессии
         db.query(ChatHistory).filter(
             ChatHistory.character_id == chat.character_id,
@@ -2845,7 +2846,7 @@ async def delete_chat_session(session_id: int, token: str):
             ChatHistory.timestamp >= session_start,
             ChatHistory.user_message != "__SESSION_START__"
         ).delete()
-        
+
         # Также удаляем маркер начала сессии
         db.query(ChatHistory).filter(
             ChatHistory.character_id == chat.character_id,
@@ -2853,9 +2854,9 @@ async def delete_chat_session(session_id: int, token: str):
             ChatHistory.user_message == "__SESSION_START__",
             ChatHistory.timestamp <= session_start
         ).delete()
-        
+
         db.commit()
-        
+
         return {"success": True, "message": "Диалог удалён"}
 
 
@@ -2868,7 +2869,7 @@ async def get_chat_sessions(token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     with SessionLocal() as db:
         # Получаем все уникальные чаты пользователя
         sessions = db.query(
@@ -2883,13 +2884,13 @@ async def get_chat_sessions(token: str):
         ).order_by(
             func.max(ChatHistory.timestamp).desc()
         ).all()
-        
+
         result = []
         for session in sessions:
             character = db.query(Character).filter(
                 Character.id == session.character_id
             ).first()
-            
+
             if character:
                 # Получаем последнее сообщение
                 last_msg = db.query(ChatHistory).filter(
@@ -2899,7 +2900,7 @@ async def get_chat_sessions(token: str):
                 ).order_by(
                     ChatHistory.timestamp.desc()
                 ).first()
-                
+
                 result.append({
                     "character_id": character.id,
                     "character_name": character.name,
@@ -2908,7 +2909,7 @@ async def get_chat_sessions(token: str):
                     "last_message_time": session.last_time.strftime("%Y-%m-%d %H:%M") if session.last_time else "",
                     "message_count": session.message_count
                 })
-        
+
         return result
 
 # --- ГЕНЕРАЦИЯ ПЕРСОНАЖА ЧЕРЕЗ ИИ (FIXED) ---
@@ -2918,37 +2919,37 @@ async def generate_world(req: GenerateRequest, token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     api_keys = user.api_keys or {}
     api_key = api_keys.get("polza") or POLZA_API_KEY
     model = api_keys.get("model") or POLZA_MODEL
-    
+
     if not api_key or api_key == "your-default-api-key-here":
         return JSONResponse({
             "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
         }, 400)
-    
+
     openai.api_key = api_key
     openai.base_url = "https://polza.ai/api/v1/"
-    
+
     # Определяем, короткий это запрос или длинный
     is_short = len(req.prompt.split()) < 10
-    
+
     if is_short:
         system_prompt = """Ты — помощник по созданию миров для ролевых игр.
         Пользователь дал КОРОТКИЙ запрос. Твоя задача:
         1. Распознать жанр и сеттинг
         2. Додумать недостающие детали (история, правила, атмосфера)
         3. Сделать мир ЖИВЫМ и ИНТЕРЕСНЫМ
-        
+
         Сгенерируй мир в формате JSON с полями:
         name, description, genre, setting, rules.
-        
+
         Заполни ВСЕ поля качественно и подробно!
         description - минимум 2-3 предложения.
         setting - минимум 2-3 предложения.
         rules - минимум 3-5 правил мира.
-        
+
         ВАЖНО: Создай ТОЛЬКО ОДИН мир!
         ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
     else:
@@ -2957,18 +2958,18 @@ async def generate_world(req: GenerateRequest, token: str):
         1. Точно следовать всем указаниям пользователя
         2. Не добавлять ничего от себя
         3. Сохранить все детали из запроса
-        
+
         Сгенерируй мир в формате JSON с полями:
         name, description, genre, setting, rules.
-        
+
         Заполни ВСЕ поля качественно и подробно!
         description - минимум 2-3 предложения.
         setting - минимум 2-3 предложения.
         rules - минимум 3-5 правил мира.
-        
+
         ВАЖНО: Создай ТОЛЬКО ОДИН мир!
         ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
-    
+
     try:
         response = openai.chat.completions.create(
             model=model,
@@ -2980,7 +2981,7 @@ async def generate_world(req: GenerateRequest, token: str):
             max_tokens=1500
         )
         result = response.choices[0].message.content
-        
+
         # Пробуем найти JSON в ответе
         json_match = re.search(r'\{.*\}', result, re.DOTALL)
         if json_match:
@@ -3006,7 +3007,7 @@ async def generate_world(req: GenerateRequest, token: str):
                 "setting": result[:200],
                 "rules": "Правила не указаны"
             }
-        
+
         # Сохраняем мир в БД
         with SessionLocal() as db:
             new_world = World(
@@ -3021,7 +3022,7 @@ async def generate_world(req: GenerateRequest, token: str):
             db.commit()
             db.refresh(new_world)
             return {"success": True, "id": new_world.id, "name": new_world.name}
-            
+
     except Exception as e:
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
 
@@ -3137,7 +3138,7 @@ HTML = r"""<!DOCTYPE html>
     .hamburger-btn.active span:nth-child(3) {
         transform: rotate(-45deg) translate(4px, -4px);
     }
-    
+
     .sidebar {
         position: fixed;
         top: 0;
@@ -4054,7 +4055,7 @@ HTML = r"""<!DOCTYPE html>
             padding-bottom: max(6px, env(safe-area-inset-bottom)) !important;
         }
     }
-    
+
     .loading-overlay {
         position: fixed;
         top: 0;
@@ -4081,7 +4082,7 @@ HTML = r"""<!DOCTYPE html>
     @keyframes spin {
         to { transform: rotate(360deg); }
     }
-    
+
 </style>
 </head>
 <body>
@@ -4120,12 +4121,12 @@ HTML = r"""<!DOCTYPE html>
         <a onclick="showPage('lore')" style="margin-top:12px;"><span class="icon">◈</span>Лорбук</a>
         <a onclick="showPage('profile')"><span class="icon">⚙</span>Квартира</a>
     </div>
-    
+
     <div class="user-info" id="userInfo">Не авторизован</div>
-    
+
     <div style="display:flex; flex-direction:column; gap:8px; margin-top:4px;">
         <button class="auth-btn" id="authBtn" onclick="handleAuth()">Войти</button>
-        <button class="auth-btn" id="logoutBtn" onclick="logout()" 
+        <button class="auth-btn" id="logoutBtn" onclick="logout()"
                 style="display:none; background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3);">
             🚪 Выйти
         </button>
@@ -4244,11 +4245,11 @@ HTML = r"""<!DOCTYPE html>
         <textarea id="editCharPersonality" placeholder="Характер"></textarea>
         <textarea id="editCharBackstory" placeholder="Предыстория"></textarea>
         <textarea id="editCharGreeting" placeholder="Приветствие" style="min-height:60px;"></textarea>
-        
+
         <!-- ========== ДОБАВЬТЕ ЭТОТ БЛОК ========== -->
         <textarea id="editCharKeyTraits" placeholder="Ключевые черты (обязательные)&#10;Например: честный, смелый, не умеет врать" style="min-height:60px;"></textarea>
         <!-- =========================================== -->
-        
+
         <input type="text" id="editCharAvatar" placeholder="Ссылка на аватарку">
         <label class="file-label">
             <span id="editCharAvatarLabel">Или загрузить изображение</span>
@@ -4257,7 +4258,7 @@ HTML = r"""<!DOCTYPE html>
         <select id="editCharWorld" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
             <option value="">Без мира</option>
         </select>
-        
+
         <label class="checkbox-label"><input type="checkbox" id="editCharPublic"> Публичный</label>
         <div style="display:flex; gap:10px; margin:8px 0;">
             <input type="text" id="editGeneratePrompt"
@@ -4532,7 +4533,7 @@ HTML = r"""<!DOCTYPE html>
             <div style="text-align:center; color:#666; padding:30px 0;" id="roomChatPlaceholder">💬 Начните общение в комнате</div>
         </div>
         <div style="display:flex; gap:8px; padding:12px; border-top:1px solid rgba(255,255,255,0.05);">
-            <input type="text" id="roomChatInput" placeholder="Напишите сообщение..." 
+            <input type="text" id="roomChatInput" placeholder="Напишите сообщение..."
                    style="flex:1; padding:10px 16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:25px; color:#fff; font-size:14px; outline:none;"
                    onkeypress="if(event.key==='Enter') sendRoomMessage()">
             <button onclick="sendRoomMessage()" style="padding:10px 24px; background:linear-gradient(45deg,#4a6cf7,#304c2f); border:none; border-radius:25px; color:#fff; font-weight:bold; cursor:pointer;">Отправить</button>
@@ -4558,7 +4559,7 @@ HTML = r"""<!DOCTYPE html>
     </div>
     <div class="form-box">
         <input type="text" id="loreTitle" placeholder="Заголовок">
-        
+
         <!-- ТИП ЗАПИСИ (НОВОЕ) -->
         <select id="loreType" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
             <option value="world">🌍 Мир</option>
@@ -4639,7 +4640,7 @@ HTML = r"""<!DOCTYPE html>
     </div>
     <div class="form-box">
         <input type="text" id="editLoreTitle" placeholder="Заголовок">
-        
+
         <!-- ТИП ЗАПИСИ -->
         <select id="editLoreType" style="width:100%; padding:13px 16px; margin:8px 0; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:10px; color:#fff; font-size:15px;">
             <option value="world">🌍 Мир</option>
@@ -4824,7 +4825,7 @@ HTML = r"""<!DOCTYPE html>
                 Удаление аккаунта приведёт к безвозвратной потере всех данных: персонажей, миров, чатов, памяти и настроек.
             </p>
             <button onclick="deleteAccount()" style="padding:10px 24px; background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3); border-radius:10px; color:#ff4444; cursor:pointer; font-size:14px; transition:0.3s;"
-                    onmouseover="this.style.background='rgba(180,40,40,0.35)'" 
+                    onmouseover="this.style.background='rgba(180,40,40,0.35)'"
                     onmouseout="this.style.background='rgba(180,40,40,0.2)'">
                 🗑️ Удалить аккаунт
             </button>
@@ -4917,7 +4918,7 @@ let editingLoreId = null;
 let _personaModalCallback = null;
 let _pendingChatCharId = null;
 
-// Функция заставки 
+// Функция заставки
 
 function handleCoverClick() {
     console.log('Клик по заставке!');
@@ -4937,7 +4938,7 @@ function handleCoverClick() {
 }
 
 
-// Функция загрузки 
+// Функция загрузки
 
 const saved = localStorage.getItem('hyg_user');
 if (saved) {
@@ -4946,7 +4947,7 @@ if (saved) {
         currentUser = d.username;
         userId = d.id;
         authToken = d.token;
-        
+
         document.getElementById('authBtn').textContent = currentUser;
         document.getElementById('authBtn').style.display = 'none';
         document.getElementById('logoutBtn').style.display = 'block';
@@ -5077,19 +5078,19 @@ async function register() {
             currentUser = d.username;
             userId = d.user_id;
             authToken = d.token;
-            
+
             document.getElementById('authBtn').style.display = 'none';
             document.getElementById('logoutBtn').style.display = 'block';
             document.getElementById('authBtn').textContent = currentUser;
             document.getElementById('userInfo').textContent = '◌ ' + currentUser;
             document.getElementById('profileName').textContent = 'Добро пожаловать, ' + currentUser + '!';
-            
-            localStorage.setItem('hyg_user', JSON.stringify({ 
-                username: currentUser, 
-                id: userId, 
-                token: authToken 
+
+            localStorage.setItem('hyg_user', JSON.stringify({
+                username: currentUser,
+                id: userId,
+                token: authToken
             }));
-            
+
             document.getElementById('cover').classList.add('hidden');
             document.querySelector('.hamburger-btn').style.display = 'block';
             showPage('home');
@@ -5097,8 +5098,8 @@ async function register() {
         } else {
             alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
         }
-    } catch(e) { 
-        alert('Ошибка: ' + e.message); 
+    } catch(e) {
+        alert('Ошибка: ' + e.message);
     }
 }
 
@@ -5117,19 +5118,19 @@ async function login() {
             currentUser = d.username;
             userId = d.user_id;
             authToken = d.token;
-            
+
             document.getElementById('authBtn').style.display = 'none';
             document.getElementById('logoutBtn').style.display = 'block';
             document.getElementById('authBtn').textContent = currentUser;
             document.getElementById('userInfo').textContent = '◌ ' + currentUser;
             document.getElementById('profileName').textContent = 'Добро пожаловать, ' + currentUser + '!';
-            
-            localStorage.setItem('hyg_user', JSON.stringify({ 
-                username: currentUser, 
-                id: userId, 
-                token: authToken 
+
+            localStorage.setItem('hyg_user', JSON.stringify({
+                username: currentUser,
+                id: userId,
+                token: authToken
             }));
-            
+
             document.getElementById('cover').classList.add('hidden');
             document.querySelector('.hamburger-btn').style.display = 'block';
             showPage('home');
@@ -5137,7 +5138,7 @@ async function login() {
         } else {
             alert('Ошибка: ' + (d.error || 'Неизвестная ошибка'));
         }
-    } catch(e) { 
+    } catch(e) {
         alert('Ошибка: ' + e.message);
     }
 }
@@ -5156,7 +5157,7 @@ async function logout() {
         document.getElementById('cover').classList.remove('hidden');
         return;
     }
-    
+
     try {
         await fetch('/api/logout?token=' + encodeURIComponent(authToken), {
             method: 'POST'
@@ -5164,12 +5165,12 @@ async function logout() {
     } catch(e) {
         console.error('Ошибка при выходе:', e);
     }
-    
+
     currentUser = null;
     userId = null;
     authToken = null;
     localStorage.removeItem('hyg_user');
-    
+
     document.getElementById('authBtn').style.display = 'block';
     document.getElementById('logoutBtn').style.display = 'none';
     document.getElementById('userInfo').textContent = 'Не авторизован';
@@ -5193,7 +5194,7 @@ function getAuthUrl(url) {
                 // (просто перелогиниваемся)
             } catch(e) {}
         }
-        
+
         const separator = url.includes('?') ? '&' : '?';
         return url + separator + 'token=' + encodeURIComponent(authToken);
     }
@@ -5221,26 +5222,26 @@ async function fetchWithAuth(url, options = {}) {
             }
         }
     }
-    
+
     // Если токена всё ещё нет — просим войти
     if (!authToken) {
         alert('Сессия истекла. Пожалуйста, войдите заново.');
         showPage('login');
         throw new Error('Нет токена');
     }
-    
+
     // Добавляем токен в URL
     const separator = url.includes('?') ? '&' : '?';
     const urlWithToken = url + separator + 'token=' + encodeURIComponent(authToken);
-    
+
     // Делаем запрос
     try {
         const response = await fetch(urlWithToken, options);
-        
+
         // Если пришёл 401 (не авторизован) — пробуем обновить
         if (response.status === 401) {
             console.warn('⚠️ Токен недействителен, пробуем восстановить...');
-            
+
             // Пробуем восстановить из localStorage
             const saved = localStorage.getItem('hyg_user');
             if (saved) {
@@ -5257,7 +5258,7 @@ async function fetchWithAuth(url, options = {}) {
                     }
                 } catch(e) {}
             }
-            
+
             // Если не удалось восстановить — просим войти
             alert('Сессия истекла. Пожалуйста, войдите заново.');
             localStorage.removeItem('hyg_user');
@@ -5267,7 +5268,7 @@ async function fetchWithAuth(url, options = {}) {
             showPage('login');
             throw new Error('Сессия истекла');
         }
-        
+
         return response;
     } catch(e) {
         console.error('❌ Ошибка запроса:', e);
@@ -5379,30 +5380,30 @@ async function deleteAccount() {
         const r = await fetch(getAuthUrl('/api/account'), {
             method: 'DELETE'
         });
-        
+
         const data = await r.json();
-        
+
         if (data.success) {
             alert('✅ Аккаунт удалён. Все данные стёрты.');
-            
+
             // Очищаем локальное хранилище
             localStorage.clear();
-            
+
             // Сбрасываем состояние
             currentUser = null;
             userId = null;
             authToken = null;
-            
+
             // Обновляем UI
             document.getElementById('authBtn').style.display = 'block';
             document.getElementById('logoutBtn').style.display = 'none';
             document.getElementById('userInfo').textContent = 'Не авторизован';
             document.querySelector('.hamburger-btn').style.display = 'none';
-            
+
             // Показываем заставку
             document.getElementById('cover').classList.remove('hidden');
             document.getElementById('cover').style.display = 'flex';
-            
+
             showPage('home');
         } else {
             alert('Ошибка при удалении аккаунта: ' + (data.error || 'Неизвестная ошибка'));
@@ -5474,8 +5475,8 @@ async function loadCharacters() {
                 </div>
             </div>
         `).join('');
-    } catch(e) { 
-        console.error(e); 
+    } catch(e) {
+        console.error(e);
     } finally {
         hideLoading();  // 👈 ДОБАВЛЯЕМ (всегда скрываем)
     }
@@ -5487,7 +5488,7 @@ function showCreateCharacter() {
     });
     // ДОБАВЬ ЭТУ СТРОКУ:
     document.getElementById('charKeyTraits').value = '';
-    
+
     document.getElementById('charPublic').checked = false;
     document.getElementById('charAvatarLabel').textContent = 'Или загрузить изображение';
     loadWorldsSelect('charWorld');
@@ -5500,10 +5501,10 @@ function showEditCharacter(charId) {
     showPage('character-edit');
     loadWorldsSelect('editCharWorld');
     loadRoomsSelect('editCharRoom');
-    
+
     // Скрываем блок связей до загрузки
     document.getElementById('page-character-relationships').style.display = 'none';
-    
+
     fetch(getAuthUrl('/api/characters/' + charId))
         .then(function(r) { return r.json(); })
         .then(function(char) {
@@ -5528,7 +5529,7 @@ function showEditCharacter(charId) {
             if (char.room_id) {
                 document.getElementById('editCharRoom').value = char.room_id;
             }
-            
+
             // ===== ЗАГРУЗКА СВЯЗЕЙ =====
             loadRelationships(charId);
         })
@@ -5804,7 +5805,7 @@ function addUserMessage(text, messageId = null, dbId = null) {
     var actions = document.createElement('div');
     actions.className = 'msg-actions';
     actions.innerHTML = '<button class="edit-btn" onclick="startEditMessage(this)" title="Редактировать">✏️</button>';
-    
+
     var avatarDiv = document.createElement('div');
     avatarDiv.className = 'msg-avatar';
     avatarDiv.title = 'Сменить персону';
@@ -6088,7 +6089,7 @@ async function saveEdit(btn) {
         content.textContent = newText;
         var oldNotes = content.querySelectorAll('.edit-note, .regen-note');
         oldNotes.forEach(function(note) { note.remove(); });
-        
+
         var editNote = document.createElement('span');
         editNote.className = 'edit-note';
         editNote.style.cssText = 'font-size:11px; color:#666; margin-left:8px;';
@@ -6121,23 +6122,23 @@ async function saveEdit(btn) {
             content.textContent = newText;
             var oldNotes = content.querySelectorAll('.edit-note, .regen-note');
             oldNotes.forEach(function(note) { note.remove(); });
-            
+
             var editNote = document.createElement('span');
             editNote.className = 'edit-note';
             editNote.style.cssText = 'font-size:11px; color:#666; margin-left:8px;';
             editNote.textContent = '✎ отредактировано';
             content.appendChild(editNote);
-            
+
             console.log('✅ Сообщение успешно отредактировано');
 
             // ===== АВТО-ПЕРЕГЕНЕРАЦИЯ ОТВЕТА БОТА =====
             if (!isBot) {
                 console.log('🔄 Это сообщение пользователя, ищем ответ бота...');
-                
+
                 var allMessages = document.querySelectorAll('.msg-wrapper');
                 var botResponse = null;
                 var foundCurrent = false;
-                
+
                 for (var i = 0; i < allMessages.length; i++) {
                     if (allMessages[i] === wrapper) {
                         foundCurrent = true;
@@ -6151,17 +6152,17 @@ async function saveEdit(btn) {
 
                 if (botResponse) {
                     console.log('✅ Найден ответ бота, перегенерируем...');
-                    
+
                     var botContent = botResponse.querySelector('.msg-content');
                     var originalBotText = botContent.textContent;
                     botContent.textContent = '🔄 Перегенерация ответа...';
                     botContent.style.opacity = '0.6';
-                    
+
                     try {
                         var temperature = parseFloat(document.getElementById('chatTemperature').value) || 0.8;
                         var mode = document.getElementById('chatMode').value;
                         var personaId = document.getElementById('chatPersonaSelect').value;
-                        
+
                         var regenR = await fetch(getAuthUrl('/api/chat/regenerate'), {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -6174,13 +6175,13 @@ async function saveEdit(btn) {
                                 max_tokens: 1500
                             })
                         });
-                        
+
                         var regenData = await regenR.json();
-                        
+
                         if (regenData.success && regenData.response) {
                             botContent.textContent = regenData.response;
                             botContent.style.opacity = '1';
-                            
+
                             var regenNote = botContent.querySelector('.regen-note');
                             if (!regenNote) {
                                 regenNote = document.createElement('span');
@@ -6189,7 +6190,7 @@ async function saveEdit(btn) {
                                 botContent.appendChild(regenNote);
                             }
                             regenNote.textContent = '🔄 перегенерировано (после правки)';
-                            
+
                             var botDbId = botResponse.dataset.dbId;
                             if (botDbId && botDbId !== 'null' && botDbId !== '') {
                                 var botNumericId = parseInt(botDbId);
@@ -6221,7 +6222,7 @@ async function saveEdit(btn) {
                     console.log('ℹ️ Ответ бота не найден');
                 }
             }
-            
+
         } else {
             alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
             content.textContent = originalText;
@@ -6371,17 +6372,17 @@ async function loadFactions() {
         document.getElementById('factionsGrid').innerHTML = '<div style="color:#666;text-align:center;padding:40px;">Войдите чтобы увидеть фракции</div>';
         return;
     }
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/factions'));
         const factions = await r.json();
         const grid = document.getElementById('factionsGrid');
-        
+
         if (!factions || !factions.length) {
             grid.innerHTML = '<div style="color:#666;text-align:center;padding:40px;">У вас пока нет фракций<br><span style="font-size:13px;color:#444;">Создайте свою первую фракцию!</span></div>';
             return;
         }
-        
+
         grid.innerHTML = factions.map(f => `
             <div class="card" onclick="viewFaction(${f.id})" style="cursor:pointer;">
                 <div class="avatar">${f.avatar ? '<img src="'+f.avatar+'">' : '🏛️'}</div>
@@ -6394,7 +6395,7 @@ async function loadFactions() {
                 </div>
             </div>
         `).join('');
-        
+
     } catch(e) {
         console.error('Ошибка загрузки фракций:', e);
     }
@@ -6430,10 +6431,10 @@ function showCreateFaction() {
 
 async function saveFaction() {
     if (!authToken) { alert('Войдите чтобы создать фракцию'); return; }
-    
+
     const world_id = parseInt(document.getElementById('factionWorld').value);
     if (!world_id) { alert('Выберите мир'); return; }
-    
+
     const data = {
         name: document.getElementById('factionName').value.trim(),
         type: document.getElementById('factionType').value,
@@ -6447,9 +6448,9 @@ async function saveFaction() {
         avatar: document.getElementById('factionAvatar').value.trim() || null,
         world_id: world_id
     };
-    
+
     if (!data.name) { alert('Введите название'); return; }
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/factions'), {
             method: 'POST',
@@ -6761,17 +6762,17 @@ async function deleteChatSession(characterId, characterName) {
             method: 'POST'
         });
         const clearData = await clearR.json();
-        
+
         if (!clearData.success) {
             alert('Ошибка при удалении чата');
             return;
         }
-        
+
         localStorage.removeItem('chat_persona_' + characterId);
         localStorage.removeItem('chat_history_' + characterId);
-        
+
         loadChats();
-        
+
         if (chatCharacterId == characterId) {
             showPage('chats');
             chatCharacterId = null;
@@ -6781,9 +6782,9 @@ async function deleteChatSession(characterId, characterName) {
             document.getElementById('chatSubtitle').textContent = 'Выбери персонажа и начни диалог';
             document.getElementById('chatMessages').innerHTML = '<div style="color:#666;text-align:center;padding:36px 0;">Выбери персонажа и начни диалог</div>';
         }
-        
+
         alert(`✅ Чат с "${characterName}" удалён!`);
-        
+
     } catch(e) {
         console.error('Ошибка удаления чата:', e);
         alert('Ошибка при удалении чата: ' + e.message);
@@ -6845,7 +6846,7 @@ async function saveRoom() {
             body: JSON.stringify(data)
         });
         const d = await r.json();
-        if (d.success) { 
+        if (d.success) {
             alert('✅ Комната создана!');
             showPage('rooms');
             loadRooms();
@@ -6878,27 +6879,27 @@ async function viewRoom(roomId) {
     currentRoomId = roomId;
     showPage('room-view');
     document.getElementById('roomChatMessages').innerHTML = '<div style="text-align:center; color:#666; padding:30px 0;">⏳ Загрузка...</div>';
-    
+
     try {
         // Загружаем информацию о комнате
         const r = await fetch(getAuthUrl('/api/rooms'));
         const rooms = await r.json();
         const room = rooms.find(r => r.id === roomId);
-        
+
         if (room) {
             document.getElementById('roomViewTitle').textContent = room.name || 'Комната';
             document.getElementById('roomViewDesc').textContent = room.description || 'Без описания';
         }
-        
+
         // Загружаем персонажей комнаты
         await loadRoomCharacters(roomId);
-        
+
         // Загружаем историю чата
         await loadRoomChatHistory(roomId);
-        
+
         // Начинаем polling для новых сообщений
         startRoomChatPolling(roomId);
-        
+
     } catch(e) {
         console.error('Ошибка загрузки комнаты:', e);
         document.getElementById('roomChatMessages').innerHTML = '<div style="text-align:center; color:#ff4444; padding:30px 0;">❌ Ошибка загрузки</div>';
@@ -6910,12 +6911,12 @@ async function loadRoomCharacters(roomId) {
         const r = await fetch(getAuthUrl('/api/rooms/' + roomId + '/characters'));
         const chars = await r.json();
         const container = document.getElementById('roomCharactersList');
-        
+
         if (!chars || !chars.length) {
             container.innerHTML = '<span style="color:#666; font-size:13px;">Нет персонажей в комнате</span>';
             return;
         }
-        
+
         container.innerHTML = chars.map(c => `
             <div style="display:flex; align-items:center; gap:6px; background:rgba(255,255,255,0.04); padding:4px 12px 4px 6px; border-radius:20px; border:1px solid rgba(255,255,255,0.05);">
                 <div style="width:24px; height:24px; border-radius:50%; overflow:hidden; background:rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:center; font-size:12px;">
@@ -6939,12 +6940,12 @@ async function loadRoomChatHistory(roomId, limit = 50) {
         const r = await fetch(getAuthUrl('/api/rooms/' + roomId + '/chat/history?limit=' + limit));
         const messages = await r.json();
         const container = document.getElementById('roomChatMessages');
-        
+
         if (!messages || !messages.length) {
             container.innerHTML = '<div style="text-align:center; color:#666; padding:30px 0;">💬 Начните общение в комнате</div>';
             return;
         }
-        
+
         container.innerHTML = messages.map(m => {
             const isUser = m.sender_type === 'user';
             const avatarHtml = m.avatar ? `<img src="${m.avatar}" style="width:100%;height:100%;object-fit:cover;">` : (isUser ? '◌' : '✦');
@@ -6961,7 +6962,7 @@ async function loadRoomChatHistory(roomId, limit = 50) {
                 </div>
             `;
         }).join('');
-        
+
         container.scrollTop = container.scrollHeight;
     } catch(e) {
         console.error('Ошибка загрузки истории чата:', e);
@@ -6973,14 +6974,14 @@ async function sendRoomMessage() {
         alert('Комната не выбрана');
         return;
     }
-    
+
     const input = document.getElementById('roomChatInput');
     const message = input.value.trim();
     if (!message) return;
-    
+
     input.value = '';
     input.disabled = true;
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/rooms/' + currentRoomId + '/chat'), {
             method: 'POST',
@@ -6988,7 +6989,7 @@ async function sendRoomMessage() {
             body: JSON.stringify({ message: message })
         });
         const data = await r.json();
-        
+
         if (data.user_message) {
             await loadRoomChatHistory(currentRoomId);
         } else if (data.error) {
@@ -7009,7 +7010,7 @@ function startRoomChatPolling(roomId) {
         clearInterval(roomChatPolling);
         roomChatPolling = null;
     }
-    
+
     // Обновляем чат каждые 5 секунд
     roomChatPolling = setInterval(() => {
         if (currentRoomId === roomId) {
@@ -7030,25 +7031,25 @@ async function addCharacterToRoom() {
         alert('Комната не выбрана');
         return;
     }
-    
+
     try {
         // Получаем всех персонажей пользователя
         const r = await fetch(getAuthUrl('/api/characters'));
         const allChars = await r.json();
-        
+
         // Получаем персонажей уже в комнате
         const roomR = await fetch(getAuthUrl('/api/rooms/' + currentRoomId + '/characters'));
         const roomChars = await roomR.json();
         const roomCharIds = roomChars.map(c => c.id);
-        
+
         // Доступные для добавления
         const available = allChars.filter(c => !roomCharIds.includes(c.id));
-        
+
         if (!available.length) {
             alert('Нет свободных персонажей для добавления');
             return;
         }
-        
+
         // Создаём модальное окно
         const modal = document.createElement('div');
         modal.style.cssText = `
@@ -7060,7 +7061,7 @@ async function addCharacterToRoom() {
         modal.onclick = function(e) {
             if (e.target === modal) modal.remove();
         };
-        
+
         const content = document.createElement('div');
         content.style.cssText = `
             background: #1a1a1a; border-radius: 20px; padding: 30px;
@@ -7068,24 +7069,24 @@ async function addCharacterToRoom() {
             border: 1px solid rgba(48,76,47,0.3);
             overflow-y: auto;
         `;
-        
+
         content.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
                 <h2 style="color:#fff; font-size:20px; margin:0;">👤 Добавить персонажа</h2>
-                <button onclick="this.closest('div[style]').parentElement.remove()" 
+                <button onclick="this.closest('div[style]').parentElement.remove()"
                         style="background:transparent; border:none; color:#888; font-size:24px; cursor:pointer;">✕</button>
             </div>
             <div style="display:flex; flex-direction:column; gap:8px;">
                 ${available.map(c => `
-                    <div onclick="selectCharacterForRoom(${c.id})" 
-                         style="display:flex; align-items:center; gap:12px; padding:10px 14px; 
-                                background:rgba(255,255,255,0.03); border-radius:10px; 
+                    <div onclick="selectCharacterForRoom(${c.id})"
+                         style="display:flex; align-items:center; gap:12px; padding:10px 14px;
+                                background:rgba(255,255,255,0.03); border-radius:10px;
                                 border:1px solid rgba(255,255,255,0.05); cursor:pointer;
                                 transition:0.3s;"
-                         onmouseover="this.style.background='rgba(48,76,47,0.15)'" 
+                         onmouseover="this.style.background='rgba(48,76,47,0.15)'"
                          onmouseout="this.style.background='rgba(255,255,255,0.03)'">
-                        <div style="width:36px; height:36px; border-radius:50%; overflow:hidden; 
-                                    background:rgba(255,255,255,0.05); display:flex; align-items:center; 
+                        <div style="width:36px; height:36px; border-radius:50%; overflow:hidden;
+                                    background:rgba(255,255,255,0.05); display:flex; align-items:center;
                                     justify-content:center; font-size:16px; flex-shrink:0;">
                             ${c.avatar ? `<img src="${c.avatar}" style="width:100%;height:100%;object-fit:cover;">` : '✦'}
                         </div>
@@ -7098,16 +7099,16 @@ async function addCharacterToRoom() {
                 `).join('')}
             </div>
             <div style="margin-top:16px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.05);">
-                <button onclick="this.closest('div[style]').parentElement.remove()" 
-                        style="width:100%; padding:10px; background:transparent; 
-                               border:1px solid rgba(255,255,255,0.1); border-radius:10px; 
+                <button onclick="this.closest('div[style]').parentElement.remove()"
+                        style="width:100%; padding:10px; background:transparent;
+                               border:1px solid rgba(255,255,255,0.1); border-radius:10px;
                                color:#888; cursor:pointer;">Отмена</button>
             </div>
         `;
-        
+
         modal.appendChild(content);
         document.body.appendChild(modal);
-        
+
     } catch(e) {
         alert('Ошибка: ' + e.message);
     }
@@ -7117,7 +7118,7 @@ async function selectCharacterForRoom(charId) {
     // Закрываем модалку
     const modal = document.querySelector('div[style*="position: fixed"][style*="z-index: 10000"]');
     if (modal) modal.remove();
-    
+
     try {
         const addR = await fetch(getAuthUrl('/api/rooms/' + currentRoomId + '/characters'), {
             method: 'POST',
@@ -7125,7 +7126,7 @@ async function selectCharacterForRoom(charId) {
             body: JSON.stringify({ character_id: charId })   // ← ПРАВИЛЬНО
         });
         const data = await addR.json();
-        
+
         if (data.success) {
             alert('✅ Персонаж добавлен в комнату!');
             await loadRoomCharacters(currentRoomId);
@@ -7145,17 +7146,17 @@ async function showEditRoom() {
         alert('Комната не выбрана');
         return;
     }
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/rooms'));
         const rooms = await r.json();
         const room = rooms.find(r => r.id === currentRoomId);
-        
+
         if (!room) {
             alert('Комната не найдена');
             return;
         }
-        
+
         // Создаём модальное окно
         const modal = document.createElement('div');
         modal.style.cssText = `
@@ -7167,40 +7168,40 @@ async function showEditRoom() {
         modal.onclick = function(e) {
             if (e.target === modal) modal.remove();
         };
-        
+
         const content = document.createElement('div');
         content.style.cssText = `
             background: #1a1a1a; border-radius: 20px; padding: 30px;
             max-width: 450px; width: 90%;
             border: 1px solid rgba(48,76,47,0.3);
         `;
-        
+
         content.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
                 <h2 style="color:#fff; font-size:20px; margin:0;">✎ Редактировать комнату</h2>
-                <button onclick="this.closest('div[style]').parentElement.remove()" 
+                <button onclick="this.closest('div[style]').parentElement.remove()"
                         style="background:transparent; border:none; color:#888; font-size:24px; cursor:pointer;">✕</button>
             </div>
             <div style="display:flex; flex-direction:column; gap:12px;">
-                <input type="text" id="editRoomName" value="${room.name || ''}" 
-                       placeholder="Название комнаты" 
-                       style="width:100%; padding:12px 16px; background:rgba(255,255,255,0.04); 
-                              border:1px solid rgba(255,255,255,0.06); border-radius:10px; 
+                <input type="text" id="editRoomName" value="${room.name || ''}"
+                       placeholder="Название комнаты"
+                       style="width:100%; padding:12px 16px; background:rgba(255,255,255,0.04);
+                              border:1px solid rgba(255,255,255,0.06); border-radius:10px;
                               color:#fff; font-size:15px; outline:none;">
-                <textarea id="editRoomDesc" placeholder="Описание комнаты" 
-                          style="width:100%; padding:12px 16px; background:rgba(255,255,255,0.04); 
-                                 border:1px solid rgba(255,255,255,0.06); border-radius:10px; 
+                <textarea id="editRoomDesc" placeholder="Описание комнаты"
+                          style="width:100%; padding:12px 16px; background:rgba(255,255,255,0.04);
+                                 border:1px solid rgba(255,255,255,0.06); border-radius:10px;
                                  color:#fff; font-size:15px; outline:none; min-height:80px; resize:vertical;">${room.description || ''}</textarea>
-                <button onclick="saveEditRoom()" 
-                        style="width:100%; padding:14px; background:linear-gradient(45deg,#304c2f,#043267); 
-                               border:none; border-radius:25px; color:#fff; font-size:16px; font-weight:bold; 
+                <button onclick="saveEditRoom()"
+                        style="width:100%; padding:14px; background:linear-gradient(45deg,#304c2f,#043267);
+                               border:none; border-radius:25px; color:#fff; font-size:16px; font-weight:bold;
                                cursor:pointer; margin-top:8px;">💾 Сохранить</button>
             </div>
         `;
-        
+
         modal.appendChild(content);
         document.body.appendChild(modal);
-        
+
     } catch(e) {
         alert('Ошибка: ' + e.message);
     }
@@ -7209,12 +7210,12 @@ async function showEditRoom() {
 async function saveEditRoom() {
     const name = document.getElementById('editRoomName').value.trim();
     const description = document.getElementById('editRoomDesc').value.trim();
-    
+
     if (!name) {
         alert('Введите название');
         return;
     }
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/rooms/' + currentRoomId), {
             method: 'PUT',
@@ -7222,7 +7223,7 @@ async function saveEditRoom() {
             body: JSON.stringify({ name, description })
         });
         const data = await r.json();
-        
+
         if (data.success) {
             alert('✅ Комната обновлена!');
             // Закрываем модалку
@@ -7239,7 +7240,7 @@ async function saveEditRoom() {
 }
 
 // ============================================
-// Лорбук 
+// Лорбук
 // ============================================
 async function loadLore() {
     if (!authToken) {
@@ -7846,7 +7847,7 @@ function showChatHistory() {
             const date = new Date(chat.timestamp).toLocaleString();
             const preview = chat.messages.length > 0 ? chat.messages[0].content.slice(0, 50) + '...' : 'Пустой чат';
             const msgCount = chat.messages.length;
-            
+
             return `
                 <div style="padding:12px 16px; background:rgba(255,255,255,0.03); border-radius:10px; border:1px solid rgba(255,255,255,0.05); display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                     <div style="flex:1;">
@@ -7961,13 +7962,13 @@ async function deleteAllChatsWithCharacter() {
     try {
         // Удаляем из локального хранилища
         localStorage.removeItem('chat_history_' + chatCharacterId);
-        
+
         // Закрываем модальное окно
         closeChatHistory();
-        
+
         // Перезагружаем историю
         showChatHistory();
-        
+
         alert('✅ Все диалоги удалены!');
     } catch(e) {
         alert('Ошибка: ' + e.message);
@@ -8153,21 +8154,21 @@ let currentCharacterRelationships = [];
 
 async function loadRelationships(characterId) {
     if (!authToken) return;
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/characters/' + characterId + '/relationships'));
         const relationships = await r.json();
         currentCharacterRelationships = relationships;
-        
+
         const container = document.getElementById('relationshipsGrid');
         const block = document.getElementById('page-character-relationships');
-        
+
         if (!relationships || !relationships.length) {
             container.innerHTML = '<div style="color:#666; text-align:center; padding:12px;">🔗 Нет связей</div>';
             block.style.display = 'block';
             return;
         }
-        
+
         // Загружаем типы связей
         const typesR = await fetch('/api/characters/relationship-types');
         const typesData = await typesR.json();
@@ -8175,22 +8176,22 @@ async function loadRelationships(characterId) {
         typesData.types.forEach(t => {
             typeMap[t.value] = t.label;
         });
-        
+
         block.style.display = 'block';
-        
+
         container.innerHTML = relationships.map(rel => {
             const label = typeMap[rel.relationship_type] || rel.relationship_type;
-            
+
             return `
-                <div style="display:flex; align-items:center; gap:12px; 
-                            background:rgba(255,255,255,0.03); 
-                            border:1px solid rgba(255,255,255,0.05); 
+                <div style="display:flex; align-items:center; gap:12px;
+                            background:rgba(255,255,255,0.03);
+                            border:1px solid rgba(255,255,255,0.05);
                             border-radius:10px; padding:10px 14px;">
-                    <div style="width:40px; height:40px; border-radius:50%; 
-                                overflow:hidden; background:rgba(255,255,255,0.05); 
+                    <div style="width:40px; height:40px; border-radius:50%;
+                                overflow:hidden; background:rgba(255,255,255,0.05);
                                 display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0;">
-                        ${rel.related_character_avatar ? 
-                            `<img src="${rel.related_character_avatar}" style="width:100%;height:100%;object-fit:cover;">` : 
+                        ${rel.related_character_avatar ?
+                            `<img src="${rel.related_character_avatar}" style="width:100%;height:100%;object-fit:cover;">` :
                             '✦'}
                     </div>
                     <div style="flex:1;">
@@ -8210,8 +8211,8 @@ async function loadRelationships(characterId) {
                         </div>
                     </div>
                     <div style="display:flex; gap:4px; flex-shrink:0;">
-                        <button onclick="deleteRelationship(${rel.id})" 
-                                style="background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3); 
+                        <button onclick="deleteRelationship(${rel.id})"
+                                style="background:rgba(180,40,40,0.2); border:1px solid rgba(180,40,40,0.3);
                                        border-radius:8px; color:#ff4444; padding:4px 8px; cursor:pointer; font-size:12px;">
                             ✕
                         </button>
@@ -8219,7 +8220,7 @@ async function loadRelationships(characterId) {
                 </div>
             `;
         }).join('');
-        
+
     } catch(e) {
         console.error('Ошибка загрузки связей:', e);
     }
@@ -8234,20 +8235,20 @@ async function openAddRelationship() {
         alert('Сначала откройте персонажа на редактирование');
         return;
     }
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/characters'));
         const allChars = await r.json();
         const available = allChars.filter(c => c.id !== editingCharacterId);
-        
+
         if (!available.length) {
             alert('Нет других персонажей для связи');
             return;
         }
-        
+
         const typesR = await fetch('/api/characters/relationship-types');
         const typesData = await typesR.json();
-        
+
         const modal = document.createElement('div');
         modal.style.cssText = `
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -8258,7 +8259,7 @@ async function openAddRelationship() {
         modal.onclick = function(e) {
             if (e.target === modal) modal.remove();
         };
-        
+
         const content = document.createElement('div');
         content.style.cssText = `
             background: #1a1a1a; border-radius: 20px; padding: 30px;
@@ -8266,62 +8267,62 @@ async function openAddRelationship() {
             border: 1px solid rgba(48,76,47,0.3);
             overflow-y: auto;
         `;
-        
+
         content.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
                 <h2 style="color:#fff; font-size:20px; margin:0;">🔗 Новая связь</h2>
-                <button onclick="this.closest('div[style]').parentElement.remove()" 
+                <button onclick="this.closest('div[style]').parentElement.remove()"
                         style="background:transparent; border:none; color:#888; font-size:24px; cursor:pointer;">✕</button>
             </div>
-            
+
             <div style="margin-bottom:16px;">
                 <label style="color:#888; font-size:13px;">Выберите персонажа:</label>
-                <select id="relCharacterSelect" style="width:100%; padding:10px 14px; margin-top:4px; 
-                        background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); 
+                <select id="relCharacterSelect" style="width:100%; padding:10px 14px; margin-top:4px;
+                        background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06);
                         border-radius:8px; color:#fff; font-size:14px; outline:none;">
                     ${available.map(c => `
                         <option value="${c.id}">${c.name} (${c.role || 'Без роли'})</option>
                     `).join('')}
                 </select>
             </div>
-            
+
             <div style="margin-bottom:16px;">
                 <label style="color:#888; font-size:13px;">Тип связи:</label>
-                <select id="relTypeSelect" style="width:100%; padding:10px 14px; margin-top:4px; 
-                        background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); 
+                <select id="relTypeSelect" style="width:100%; padding:10px 14px; margin-top:4px;
+                        background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06);
                         border-radius:8px; color:#fff; font-size:14px; outline:none;">
                     ${typesData.types.map(t => `
                         <option value="${t.value}">${t.label}</option>
                     `).join('')}
                 </select>
             </div>
-            
+
             <div style="margin-bottom:16px;">
                 <label style="color:#888; font-size:13px;">Описание (необязательно):</label>
-                <input type="text" id="relDescription" placeholder="Например: Вместе учились..." 
-                       style="width:100%; padding:10px 14px; margin-top:4px; 
-                              background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); 
+                <input type="text" id="relDescription" placeholder="Например: Вместе учились..."
+                       style="width:100%; padding:10px 14px; margin-top:4px;
+                              background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06);
                               border-radius:8px; color:#fff; font-size:14px; outline:none;">
             </div>
-            
+
             <div style="margin-bottom:16px;">
                 <label style="color:#888; font-size:13px;">Сила связи: <span id="relStrengthValue">5</span>/10</label>
-                <input type="range" id="relStrength" min="1" max="10" value="5" 
+                <input type="range" id="relStrength" min="1" max="10" value="5"
                        style="width:100%; accent-color:#304c2f; margin-top:4px;"
                        oninput="document.getElementById('relStrengthValue').textContent=this.value">
             </div>
-            
-            <button onclick="saveRelationship()" 
-                    style="width:100%; padding:14px; background:linear-gradient(45deg,#304c2f,#043267); 
-                           border:none; border-radius:25px; color:#fff; font-size:16px; font-weight:bold; 
+
+            <button onclick="saveRelationship()"
+                    style="width:100%; padding:14px; background:linear-gradient(45deg,#304c2f,#043267);
+                           border:none; border-radius:25px; color:#fff; font-size:16px; font-weight:bold;
                            cursor:pointer; margin-top:8px;">
                 💾 Сохранить связь
             </button>
         `;
-        
+
         modal.appendChild(content);
         document.body.appendChild(modal);
-        
+
     } catch(e) {
         alert('Ошибка: ' + e.message);
     }
@@ -8332,7 +8333,7 @@ async function saveRelationship() {
     const relType = document.getElementById('relTypeSelect').value;
     const description = document.getElementById('relDescription').value.trim();
     const strength = parseInt(document.getElementById('relStrength').value);
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/characters/relationships'), {
             method: 'POST',
@@ -8346,7 +8347,7 @@ async function saveRelationship() {
             })
         });
         const data = await r.json();
-        
+
         if (data.success) {
             alert('✅ Связь создана!');
             const modal = document.querySelector('div[style*="position: fixed"][style*="z-index: 10000"]');
@@ -8362,7 +8363,7 @@ async function saveRelationship() {
 
 async function deleteRelationship(relId) {
     if (!confirm('Удалить эту связь?')) return;
-    
+
     try {
         const r = await fetch(getAuthUrl('/api/characters/relationships/' + relId), {
             method: 'DELETE'
@@ -8373,6 +8374,20 @@ async function deleteRelationship(relId) {
         }
     } catch(e) {
         alert('Ошибка: ' + e.message);
+    }
+}
+
+// ============================================
+// ОБРАБОТЧИК АВТОРИЗАЦИИ
+// ============================================
+
+function handleAuth() {
+    if (currentUser) {
+        // Если пользователь уже авторизован - показываем профиль
+        showPage('profile');
+    } else {
+        // Если не авторизован - показываем страницу входа
+        showPage('login');
     }
 }
 </script>
@@ -8438,7 +8453,7 @@ def load_user_memories(user_id: int, limit: int = 20):
             UserMemory.user_id == user_id
         ).order_by(UserMemory.created_at.desc()).limit(limit).all()
         return [m.fact for m in memories]
-        
+
         # ============================================
 # ФУНКЦИИ ДЛЯ ИЕРАРХИЧЕСКОЙ ПАМЯТИ
 # ============================================
@@ -8464,11 +8479,11 @@ def save_hierarchical_memory(
         db.add(memory)
         db.commit()
         db.refresh(memory)
-        
+
         # Если важность высокая и это не долгосрочная память - консолидируем
         if importance > 1.5 and memory_type != "long":
             consolidate_memory(user_id, memory.id)
-        
+
         return memory.id
 
 def get_relevant_memory(
@@ -8488,7 +8503,7 @@ def get_relevant_memory(
         if character_id:
             long_memory = long_memory.filter(MemoryHierarchy.character_id == character_id)
         long_memory = long_memory.order_by(MemoryHierarchy.importance.desc()).limit(limit // 2).all()
-        
+
         # Затем среднесрочную
         medium_memory = db.query(MemoryHierarchy).filter(
             MemoryHierarchy.user_id == user_id,
@@ -8501,7 +8516,7 @@ def get_relevant_memory(
             MemoryHierarchy.last_accessed.desc(),
             MemoryHierarchy.importance.desc()
         ).limit(limit // 3).all()
-        
+
         # Затем краткосрочную (самая свежая)
         short_memory = db.query(MemoryHierarchy).filter(
             MemoryHierarchy.user_id == user_id,
@@ -8513,16 +8528,16 @@ def get_relevant_memory(
         short_memory = short_memory.order_by(
             MemoryHierarchy.last_accessed.desc()
         ).limit(limit - len(long_memory) - len(medium_memory)).all()
-        
+
         # Объединяем
         all_memory = long_memory + medium_memory + short_memory
-        
+
         # Обновляем время доступа
         for mem in all_memory:
             mem.last_accessed = datetime.utcnow()
             mem.access_count += 1
         db.commit()
-        
+
         return [{
             "id": m.id,
             "content": m.content,
@@ -8538,17 +8553,17 @@ def consolidate_memory(user_id: int, memory_id: int):
             MemoryHierarchy.id == memory_id,
             MemoryHierarchy.user_id == user_id
         ).first()
-        
+
         if not memory or memory.memory_type == "long":
             return
-        
+
         # Проверяем, есть ли похожие воспоминания
         similar = db.query(MemoryHierarchy).filter(
             MemoryHierarchy.user_id == user_id,
             MemoryHierarchy.memory_type == "long",
             MemoryHierarchy.content.ilike(f"%{memory.content[:50]}%")
         ).first()
-        
+
         if similar:
             # Обновляем существующее
             similar.content = memory.content + "\n\n[Обновлено] " + similar.content
@@ -8567,7 +8582,7 @@ def forget_memory(user_id: int, days_threshold: int = 30):
     """Механизм забывания - удаляет неиспользуемую память"""
     with SessionLocal() as db:
         cutoff = datetime.utcnow() - timedelta(days=days_threshold)
-        
+
         # Короткая память забывается быстрее
         short_memory = db.query(MemoryHierarchy).filter(
             MemoryHierarchy.user_id == user_id,
@@ -8575,7 +8590,7 @@ def forget_memory(user_id: int, days_threshold: int = 30):
             MemoryHierarchy.last_accessed < cutoff,
             MemoryHierarchy.importance < 0.5
         ).delete()
-        
+
         # Средняя память - реже
         medium_cutoff = datetime.utcnow() - timedelta(days=days_threshold * 2)
         medium_memory = db.query(MemoryHierarchy).filter(
@@ -8584,9 +8599,9 @@ def forget_memory(user_id: int, days_threshold: int = 30):
             MemoryHierarchy.last_accessed < medium_cutoff,
             MemoryHierarchy.importance < 0.3
         ).update({"is_forgotten": True})
-        
+
         db.commit()
-        
+
         return short_memory + medium_memory
 
 def summarize_memory_batch(user_id: int):
@@ -8600,24 +8615,24 @@ def summarize_memory_batch(user_id: int):
             MemoryHierarchy.created_at < cutoff,
             MemoryHierarchy.is_forgotten == False
         ).order_by(MemoryHierarchy.created_at).limit(20).all()
-        
+
         if len(old_memories) < 5:
             return None
-        
+
         # Группируем по категориям
         categories = {}
         for mem in old_memories:
             if mem.category not in categories:
                 categories[mem.category] = []
             categories[mem.category].append(mem)
-        
+
         summaries = []
         for category, memories in categories.items():
             if len(memories) < 3:
                 continue
-            
+
             memory_text = "\n".join([f"- {m.content}" for m in memories])
-            
+
             try:
                 response = openai.chat.completions.create(
                     model="deepseek/deepseek-v4-flash",
@@ -8629,7 +8644,7 @@ def summarize_memory_batch(user_id: int):
                     temperature=0.5
                 )
                 summary = response.choices[0].message.content
-                
+
                 # Сохраняем консолидированную память
                 consolidated = MemoryConsolidation(
                     user_id=user_id,
@@ -8638,19 +8653,19 @@ def summarize_memory_batch(user_id: int):
                     is_active=True
                 )
                 db.add(consolidated)
-                
+
                 # Помечаем исходные как забытые
                 for mem in memories:
                     mem.is_forgotten = True
-                
+
                 db.commit()
                 summaries.append(summary)
-                
+
             except Exception as e:
                 print(f"Ошибка суммаризации: {e}")
-        
+
         return summaries
-        
+
 # ============================================
 # ЗАПУСК
 # ============================================
@@ -8668,7 +8683,7 @@ async def get_hierarchical_memory(
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     memories = get_relevant_memory(user.id, character_id=character_id, limit=limit)
     return memories
 
@@ -8685,7 +8700,7 @@ async def save_hierarchical_memory_endpoint(
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     memory_id = save_hierarchical_memory(
         user_id=user.id,
         content=content,
@@ -8694,7 +8709,7 @@ async def save_hierarchical_memory_endpoint(
         category=category,
         character_id=character_id
     )
-    
+
     return {"success": True, "memory_id": memory_id}
 
 @app.post("/api/memory/forget")
@@ -8703,7 +8718,7 @@ async def forget_old_memories(token: str, days: int = 30):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     forgotten_count = forget_memory(user.id, days)
     return {"success": True, "forgotten_count": forgotten_count}
 
@@ -8713,10 +8728,10 @@ async def consolidate_memories(token: str):
     user = get_user_by_token(token)
     if not user:
         return JSONResponse({"error": "Не авторизован"}, 401)
-    
+
     summaries = summarize_memory_batch(user.id)
     return {"success": True, "summaries": summaries or []}
-    
+
     # ============================================
 # СОЗДАНИЕ НОВЫХ ТАБЛИЦ
 # ============================================
@@ -8727,7 +8742,7 @@ try:
     print("✅ Таблицы иерархической памяти созданы")
 except Exception as e:
     print(f"❌ Ошибка создания таблиц: {e}")
-    
+
 
 # ============================================
 # ЗАПУСК СЕРВЕРА
@@ -8740,13 +8755,13 @@ async def serve_frontend():
 def start_server():
     """Запускает сервер ТОЛЬКО на локальном интерфейсе"""
     port = int(os.environ.get("PORT", 10000))
-    
+
     # Определяем хост в зависимости от платформы
     if platform.system() == 'Android':
         host = "127.0.0.1"  # На Android — только localhost
     else:
         host = "127.0.0.1"  # На ПК тоже localhost (безопасно)
-    
+
     print("=" * 50)
     print(f"🚀 Сервер H.Y.G. Portal")
     print(f"📍 Адрес: http://{host}:{port}")
@@ -8761,7 +8776,7 @@ def is_empty_response(text: str) -> bool:
     """Проверяет, является ли ответ пустым/шаблонным"""
     if not text or len(text.strip()) < 10:
         return True
-    
+
     # Шаблонные фразы, которые считаются "пустыми"
     empty_patterns = [
         "я не знаю",
@@ -8783,18 +8798,18 @@ def is_empty_response(text: str) -> bool:
         "ага",
         "угу"
     ]
-    
+
     text_lower = text.lower()
     # Если ответ состоит из 1-3 слов и это шаблон
     if len(text.split()) <= 3:
         for pattern in empty_patterns:
             if pattern in text_lower:
                 return True
-    
+
     # Если в ответе нет звёздочек (описаний действий) — тоже подозрительно
     if "*" not in text and len(text.split()) < 20:
         return True
-    
+
     return False
 
     # ============================================
@@ -8803,7 +8818,7 @@ def is_empty_response(text: str) -> bool:
 
 def generate_character_response(character, user_message, persona, context, room_context=False):
     """Генерирует ответ персонажа в контексте комнаты"""
-    
+
     system_prompt = f"""Ты — {character.name}."""
     if character.role:
         system_prompt += f"\nТвоя роль: {character.role}"
@@ -8811,10 +8826,10 @@ def generate_character_response(character, user_message, persona, context, room_
         system_prompt += f"\nТвой характер: {character.personality}"
     if character.backstory:
         system_prompt += f"\nТвоя предыстория: {character.backstory}"
-    
+
     if room_context:
         system_prompt += """
-        
+
 Ты находишься в общем чате комнаты. Здесь несколько персонажей общаются одновременно.
 
 ПРАВИЛА ОБЩЕГО ЧАТА:
@@ -8825,25 +8840,25 @@ def generate_character_response(character, user_message, persona, context, room_
 5. Не используй звёздочки для описания действий
 
 Формат ответа: просто текст, без звёздочек и кавычек."""
-    
+
     if context and context.get('recent_messages'):
         system_prompt += "\n\nНедавние сообщения в чате:\n"
         for msg in context['recent_messages'][-5:]:
             system_prompt += f"{msg['sender']}: {msg['content']}\n"
-    
+
     if persona:
         system_prompt += f"\n\nТы общаешься с {persona.name}."
         if persona.personality:
             system_prompt += f"\nХарактер собеседника: {persona.personality}"
-    
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message}
     ]
-    
+
     openai.api_key = POLZA_API_KEY
     openai.base_url = "https://polza.ai/api/v1/"
-    
+
     try:
         response = openai.chat.completions.create(
             model=POLZA_MODEL,
@@ -8863,15 +8878,15 @@ def get_room_context(room_id: int, character_id: int, limit: int = 20):
             RoomChatMessage.room_id == room_id
         ).order_by(RoomChatMessage.timestamp.desc()).limit(limit).all()
         recent_messages.reverse()
-        
+
         lore = db.query(LoreEntry).filter(
             LoreEntry.room_id == room_id
         ).order_by(LoreEntry.importance.desc()).limit(10).all()
-        
+
         characters = db.query(Character).filter(
             Character.room_id == room_id
         ).limit(10).all()
-        
+
         context = {
             "recent_messages": [{"sender": m.sender_name, "content": m.content} for m in recent_messages],
             "lore": [{"title": l.title, "content": l.content[:200]} for l in lore],
