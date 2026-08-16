@@ -103,7 +103,7 @@ def migrate_database():
             columns = conn.execute(text("PRAGMA table_info(lore_entries)")).fetchall()
             existing = [col[1] for col in columns]
 
-            new_columns = {
+           new_columns = {
                 "lore_type": "TEXT DEFAULT 'general'",
                 "subcategory": "TEXT",
                 "location": "TEXT",
