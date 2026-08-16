@@ -103,7 +103,7 @@ def migrate_database():
             columns = conn.execute(text("PRAGMA table_info(lore_entries)")).fetchall()
             existing = [col[1] for col in columns]
 
-            new_columns = {
+            new_columns = {  # <-- ИСПРАВЛЕНО: правильный отступ (4 пробела)
                 "lore_type": "TEXT DEFAULT 'general'",
                 "subcategory": "TEXT",
                 "location": "TEXT",
@@ -280,7 +280,7 @@ class Faction(Base):
     __tablename__ = "factions"
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
-    type = Column(String(50), nullable=True)  # гильдия, дом, орден, клан, секта, корпорация
+    type = Column(String(50), nullable=True)
     description = Column(Text, nullable=True)
     history = Column(Text, nullable=True)
     goals = Column(Text, nullable=True)
@@ -295,16 +295,18 @@ class Faction(Base):
     world_id = Column(Integer, ForeignKey("worlds.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
+
 class FactionRelationship(Base):
     __tablename__ = "faction_relationships"
     id = Column(Integer, primary_key=True)
     faction_id = Column(Integer, ForeignKey("factions.id"), nullable=False)
     related_faction_id = Column(Integer, ForeignKey("factions.id"), nullable=False)
-    relation_type = Column(String(20), nullable=False)  # ally, enemy, neutral, vassal, master
+    relation_type = Column(String(20), nullable=False)
     description = Column(Text, nullable=True)
     strength = Column(Integer, default=5)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class RoomChatMessage(Base):
     __tablename__ = "room_chat_messages"
     id = Column(Integer, primary_key=True)
@@ -1037,7 +1039,6 @@ async def generate_character(req: GenerateRequest, token: str):
         openai.api_key = api_key
         openai.base_url = "https://polza.ai/api/v1/"
 
-        # короткий или длинный
         is_short = len(req.prompt.split()) < 10
         print(f"📏 Тип запроса: {'короткий' if is_short else 'длинный'}")
 
@@ -1092,7 +1093,6 @@ async def generate_character(req: GenerateRequest, token: str):
         result = response.choices[0].message.content
         print(f"📄 Результат (первые 200 символов): {result[:200]}...")
 
-        # Пробуем найти JSON в ответе
         import re
         json_match = re.search(r'\{.*\}', result, re.DOTALL)
         if json_match:
@@ -1126,12 +1126,10 @@ async def generate_character(req: GenerateRequest, token: str):
 
         print(f"📝 Данные персонажа: {char_data}")
 
-        # Преобразуем key_traits в строку, если это список
         key_traits = char_data.get('key_traits', '')
         if isinstance(key_traits, list):
             key_traits = ", ".join(key_traits)
 
-        # Сохраняем персонажа в БД
         with SessionLocal() as db:
             new_char = Character(
                 user_id=user.id,
