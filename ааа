@@ -1132,23 +1132,29 @@ async def generate_character(req: GenerateRequest, token: str):
         print(f"📝 Данные персонажа: {char_data}")
 
         # Сохраняем персонажа в БД
-        with SessionLocal() as db:
-            new_char = Character(
-                user_id=user.id,
-                name=char_data.get('name', 'Без имени'),
-                role=char_data.get('role', ''),
-                description=char_data.get('description', ''),
-                personality=char_data.get('personality', ''),
-                backstory=char_data.get('backstory', ''),
-                appearance=char_data.get('appearance', ''),
-                greeting=char_data.get('greeting', 'Привет!'),
-                world_id=req.world_id if hasattr(req, 'world_id') else None
-            )
-            db.add(new_char)
-            db.commit()
-            db.refresh(new_char)
-            print(f"✅ Персонаж сохранён: ID={new_char.id}, Name={new_char.name}")
-            return {"success": True, "id": new_char.id, "name": new_char.name}
+       with SessionLocal() as db:
+    # Преобразуем key_traits в строку, если это список
+    key_traits = char_data.get('key_traits', '')
+    if isinstance(key_traits, list):
+        key_traits = ", ".join(key_traits)
+    
+    new_char = Character(
+        user_id=user.id,
+        name=char_data.get('name', 'Без имени'),
+        role=char_data.get('role', ''),
+        description=char_data.get('description', ''),
+        personality=char_data.get('personality', ''),
+        backstory=char_data.get('backstory', ''),
+        appearance=char_data.get('appearance', ''),
+        greeting=char_data.get('greeting', 'Привет!'),
+        world_id=req.world_id if hasattr(req, 'world_id') else None,
+        key_traits=key_traits  # <-- ДОБАВЬТЕ ЭТУ СТРОКУ
+    )
+    db.add(new_char)
+    db.commit()
+    db.refresh(new_char)
+    print(f"✅ Персонаж сохранён: ID={new_char.id}, Name={new_char.name}")
+    return {"success": True, "id": new_char.id, "name": new_char.name}
 
     except openai.APIError as e:
         print(f"❌ Ошибка OpenAI API: {e}")
@@ -2996,7 +3002,7 @@ async def generate_world(req: GenerateRequest, token: str):
             Заполни ВСЕ поля качественно и подробно!
             description - минимум 2-3 предложения.
             setting - минимум 2-3 предложения.
-            rules - минимум 3-5 правил мира.
+            rules - массив из 3-5 правил мира (как список строк).
 
             ВАЖНО: Создай ТОЛЬКО ОДИН мир!
             ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
@@ -3013,7 +3019,7 @@ async def generate_world(req: GenerateRequest, token: str):
             Заполни ВСЕ поля качественно и подробно!
             description - минимум 2-3 предложения.
             setting - минимум 2-3 предложения.
-            rules - минимум 3-5 правил мира.
+            rules - массив из 3-5 правил мира (как список строк).
 
             ВАЖНО: Создай ТОЛЬКО ОДИН мир!
             ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
@@ -3049,7 +3055,7 @@ async def generate_world(req: GenerateRequest, token: str):
                     "description": result[:300],
                     "genre": "Не указан",
                     "setting": result[:200],
-                    "rules": "Правила не указаны"
+                    "rules": ["Правила не указаны"]
                 }
         else:
             print("⚠️ JSON не найден в ответе, создаём из текста")
@@ -3059,20 +3065,27 @@ async def generate_world(req: GenerateRequest, token: str):
                 "description": result[:300],
                 "genre": "Не указан",
                 "setting": result[:200],
-                "rules": "Правила не указаны"
+                "rules": ["Правила не указаны"]
             }
 
         print(f"📝 Данные мира: {world_data}")
 
         # Сохраняем мир в БД
         with SessionLocal() as db:
+            # Преобразуем rules из списка в строку
+            rules = world_data.get('rules', '')
+            if isinstance(rules, list):
+                rules = "\n".join(rules)  # Превращаем список в текст с переносами
+            elif not rules:
+                rules = "Правила не указаны"
+            
             new_world = World(
                 created_by=user.id,
                 name=world_data.get('name', 'Без названия'),
                 description=world_data.get('description', ''),
                 genre=world_data.get('genre', ''),
                 setting=world_data.get('setting', ''),
-                rules=world_data.get('rules', '')
+                rules=rules
             )
             db.add(new_world)
             db.commit()
