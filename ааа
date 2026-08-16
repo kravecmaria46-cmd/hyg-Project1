@@ -6054,7 +6054,6 @@ function cancelEdit(btn) {
     const actions = wrapper.querySelector('.msg-actions');
     if (actions) actions.style.display = 'flex';
 }
-
 // ============================================
 // РЕГЕНЕРАЦИЯ ОТВЕТА
 // ============================================
