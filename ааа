@@ -5956,6 +5956,104 @@ function addBotMessage(text, messageId = null, dbId = null) {
 
     return messageId;
 }
+// ============================================
+// ОТПРАВКА СООБЩЕНИЯ В ЧАТЕ
+// ============================================
+
+async function sendMessage() {
+    const input = document.getElementById('chatInput');
+    const message = input.value.trim();
+    
+    if (!message) {
+        return;
+    }
+    
+    if (!chatCharacterId) {
+        alert('Сначала выберите персонажа');
+        return;
+    }
+    
+    const btn = document.querySelector('.chat-input-area .btn');
+    input.disabled = true;
+    btn.disabled = true;
+    btn.textContent = '⏳ Отправка...';
+    
+    try {
+        const temperature = parseFloat(document.getElementById('chatTemperature').value) || 0.8;
+        const mode = document.getElementById('chatMode').value;
+        const personaId = document.getElementById('chatPersonaSelect').value;
+        
+        addUserMessage(message);
+        input.value = '';
+        
+        showTypingIndicator();
+        
+        const r = await fetch(getAuthUrl('/api/chat'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: message,
+                character_id: chatCharacterId,
+                persona_id: personaId ? parseInt(personaId) : null,
+                temperature: temperature,
+                mode: mode,
+                max_tokens: 1500
+            })
+        });
+        
+        const data = await r.json();
+        
+        removeTypingIndicator();
+        
+        if (data.response) {
+            addBotMessage(data.response);
+            const div = document.getElementById('chatMessages');
+            div.scrollTop = div.scrollHeight;
+        } else if (data.error) {
+            alert('Ошибка: ' + data.error);
+        }
+        
+    } catch(e) {
+        console.error('Ошибка отправки сообщения:', e);
+        removeTypingIndicator();
+        alert('Ошибка: ' + e.message);
+    } finally {
+        input.disabled = false;
+        const btn = document.querySelector('.chat-input-area .btn');
+        btn.disabled = false;
+        btn.textContent = 'Отправить';
+        input.focus();
+    }
+}
+
+function showTypingIndicator() {
+    const div = document.getElementById('chatMessages');
+    removeTypingIndicator();
+    const indicator = document.createElement('div');
+    indicator.className = 'typing-indicator';
+    indicator.id = 'typingIndicator';
+    indicator.innerHTML = `<div class="dots"><span></span><span></span><span></span></div><span style="color:#666; font-size:13px;">печатает...</span>`;
+    div.appendChild(indicator);
+    div.scrollTop = div.scrollHeight;
+}
+
+function removeTypingIndicator() {
+    const indicator = document.getElementById('typingIndicator');
+    if (indicator) indicator.remove();
+}
+
+function cancelEdit(btn) {
+    const editContainer = btn.closest('.edit-container');
+    if (!editContainer) return;
+    const wrapper = editContainer.closest('.msg-wrapper');
+    if (!wrapper) return;
+    const content = wrapper.querySelector('.msg-content');
+    if (!content) return;
+    content.style.display = 'block';
+    editContainer.remove();
+    const actions = wrapper.querySelector('.msg-actions');
+    if (actions) actions.style.display = 'flex';
+}
 
 // ============================================
 // РЕГЕНЕРАЦИЯ ОТВЕТА
