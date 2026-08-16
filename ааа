@@ -1014,60 +1014,74 @@ class GenerateRequest(BaseModel):
 
 @app.post("/api/generate/character")
 async def generate_character(req: GenerateRequest, token: str):
-    user = get_user_by_token(token)
-    if not user:
-        return JSONResponse({"error": "Не авторизован"}, 401)
-
-    api_keys = user.api_keys or {}
-    api_key = api_keys.get("polza") or POLZA_API_KEY
-    model = api_keys.get("model") or POLZA_MODEL
-
-    if not api_key or api_key == "your-default-api-key-here":
-        return JSONResponse({
-            "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
-        }, 400)
-
-    openai.api_key = api_key
-    openai.base_url = "https://polza.ai/api/v1/"
-
-    # короткий или длинный
-    is_short = len(req.prompt.split()) < 10
-
-    if is_short:
-        system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
-        Пользователь дал КОРОТКИЙ запрос. Твоя задача:
-        1. Распознать персонажа
-        2. Додумать недостающие детали (характер, внешность, предыстория)
-        3. Сделать персонажа ЖИВЫМ и ИНТЕРЕСНЫМ
-
-        Сгенерируй персонажа в формате JSON с полями:
-        name, role, description, personality, backstory, appearance, greeting.
-
-        Заполни ВСЕ поля качественно и подробно!
-        description - минимум 2-3 предложения.
-        personality - минимум 2-3 предложения.
-        backstory - минимум 3-4 предложения.
-        appearance - минимум 2 предложения.
-        greeting - первое сообщение персонажа.
-
-        ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
-        ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
-    else:
-        system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
-        Пользователь дал ПОДРОБНЫЙ запрос. Твоя задача:
-        1. Точно следовать всем указаниям пользователя
-        2. Не добавлять ничего от себя
-        3. Сохранить все детали из запроса
-
-        Сгенерируй персонажа в формате JSON с полями:
-        name, role, description, personality, backstory, appearance, greeting.
-
-        Заполни ВСЕ поля качественно и подробно!
-
-        ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
-        ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
-
     try:
+        print("=" * 50)
+        print("🚀 /api/generate/character вызван")
+        print(f"📝 Запрос: {req.prompt}")
+        print(f"🌍 World ID: {req.world_id}")
+        print(f"🔑 Токен: {token[:20]}...")
+        
+        user = get_user_by_token(token)
+        if not user:
+            print("❌ Пользователь не авторизован")
+            return JSONResponse({"error": "Не авторизован"}, 401)
+
+        api_keys = user.api_keys or {}
+        api_key = api_keys.get("polza") or POLZA_API_KEY
+        model = api_keys.get("model") or POLZA_MODEL
+        
+        print(f"🔑 API Key: {api_key[:10]}... (длина: {len(api_key)})")
+        print(f"🤖 Модель: {model}")
+
+        if not api_key or api_key == "your-default-api-key-here":
+            print("❌ API ключ не настроен")
+            return JSONResponse({
+                "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
+            }, 400)
+
+        openai.api_key = api_key
+        openai.base_url = "https://polza.ai/api/v1/"
+
+        # короткий или длинный
+        is_short = len(req.prompt.split()) < 10
+        print(f"📏 Тип запроса: {'короткий' if is_short else 'длинный'}")
+
+        if is_short:
+            system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
+            Пользователь дал КОРОТКИЙ запрос. Твоя задача:
+            1. Распознать персонажа
+            2. Додумать недостающие детали (характер, внешность, предыстория)
+            3. Сделать персонажа ЖИВЫМ и ИНТЕРЕСНЫМ
+
+            Сгенерируй персонажа в формате JSON с полями:
+            name, role, description, personality, backstory, appearance, greeting.
+
+            Заполни ВСЕ поля качественно и подробно!
+            description - минимум 2-3 предложения.
+            personality - минимум 2-3 предложения.
+            backstory - минимум 3-4 предложения.
+            appearance - минимум 2 предложения.
+            greeting - первое сообщение персонажа.
+
+            ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
+            ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
+        else:
+            system_prompt = """Ты — помощник по созданию персонажей для ролевых игр.
+            Пользователь дал ПОДРОБНЫЙ запрос. Твоя задача:
+            1. Точно следовать всем указаниям пользователя
+            2. Не добавлять ничего от себя
+            3. Сохранить все детали из запроса
+
+            Сгенерируй персонажа в формате JSON с полями:
+            name, role, description, personality, backstory, appearance, greeting.
+
+            Заполни ВСЕ поля качественно и подробно!
+
+            ВАЖНО: Создай ТОЛЬКО ОДНОГО персонажа!
+            ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
+
+        print("📤 Отправка запроса к OpenAI...")
+        
         response = openai.chat.completions.create(
             model=model,
             messages=[
@@ -1075,9 +1089,13 @@ async def generate_character(req: GenerateRequest, token: str):
                 {"role": "user", "content": f"Создай персонажа по запросу: {req.prompt}"}
             ],
             temperature=0.9,
-            max_tokens=4096
+            max_tokens=4096,
+            timeout=60  # Добавляем таймаут
         )
+        
+        print("✅ Ответ получен от OpenAI")
         result = response.choices[0].message.content
+        print(f"📄 Результат (первые 200 символов): {result[:200]}...")
 
         # Пробуем найти JSON в ответе
         import re
@@ -1085,7 +1103,9 @@ async def generate_character(req: GenerateRequest, token: str):
         if json_match:
             try:
                 char_data = json.loads(json_match.group())
-            except json.JSONDecodeError:
+                print("✅ JSON успешно распарсен")
+            except json.JSONDecodeError as e:
+                print(f"❌ Ошибка парсинга JSON: {e}")
                 lines = [line.strip() for line in result.split('\n') if line.strip()]
                 char_data = {
                     "name": lines[0][:50] if lines else "Сгенерированный персонаж",
@@ -1097,6 +1117,7 @@ async def generate_character(req: GenerateRequest, token: str):
                     "greeting": "Привет! Я новый персонаж."
                 }
         else:
+            print("⚠️ JSON не найден в ответе, создаём из текста")
             lines = [line.strip() for line in result.split('\n') if line.strip()]
             char_data = {
                 "name": lines[0][:50] if lines else "Сгенерированный персонаж",
@@ -1107,6 +1128,8 @@ async def generate_character(req: GenerateRequest, token: str):
                 "appearance": "Не указана",
                 "greeting": "Привет! Я новый персонаж."
             }
+
+        print(f"📝 Данные персонажа: {char_data}")
 
         # Сохраняем персонажа в БД
         with SessionLocal() as db:
@@ -1124,9 +1147,26 @@ async def generate_character(req: GenerateRequest, token: str):
             db.add(new_char)
             db.commit()
             db.refresh(new_char)
+            print(f"✅ Персонаж сохранён: ID={new_char.id}, Name={new_char.name}")
             return {"success": True, "id": new_char.id, "name": new_char.name}
 
+    except openai.APIError as e:
+        print(f"❌ Ошибка OpenAI API: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Ошибка AI API: {str(e)}"}, 500)
+    except openai.APIConnectionError as e:
+        print(f"❌ Ошибка подключения к OpenAI: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Ошибка подключения: {str(e)}"}, 500)
+    except openai.RateLimitError as e:
+        print(f"❌ Превышен лимит запросов: {e}")
+        return JSONResponse({"error": "Превышен лимит запросов. Попробуйте позже."}, 429)
     except Exception as e:
+        print(f"❌ Неизвестная ошибка: {e}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
 
 # --- МИРЫ ---
@@ -2916,61 +2956,70 @@ async def get_chat_sessions(token: str):
 
 @app.post("/api/generate/world")
 async def generate_world(req: GenerateRequest, token: str):
-    user = get_user_by_token(token)
-    if not user:
-        return JSONResponse({"error": "Не авторизован"}, 401)
-
-    api_keys = user.api_keys or {}
-    api_key = api_keys.get("polza") or POLZA_API_KEY
-    model = api_keys.get("model") or POLZA_MODEL
-
-    if not api_key or api_key == "your-default-api-key-here":
-        return JSONResponse({
-            "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
-        }, 400)
-
-    openai.api_key = api_key
-    openai.base_url = "https://polza.ai/api/v1/"
-
-    # Определяем, короткий это запрос или длинный
-    is_short = len(req.prompt.split()) < 10
-
-    if is_short:
-        system_prompt = """Ты — помощник по созданию миров для ролевых игр.
-        Пользователь дал КОРОТКИЙ запрос. Твоя задача:
-        1. Распознать жанр и сеттинг
-        2. Додумать недостающие детали (история, правила, атмосфера)
-        3. Сделать мир ЖИВЫМ и ИНТЕРЕСНЫМ
-
-        Сгенерируй мир в формате JSON с полями:
-        name, description, genre, setting, rules.
-
-        Заполни ВСЕ поля качественно и подробно!
-        description - минимум 2-3 предложения.
-        setting - минимум 2-3 предложения.
-        rules - минимум 3-5 правил мира.
-
-        ВАЖНО: Создай ТОЛЬКО ОДИН мир!
-        ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
-    else:
-        system_prompt = """Ты — помощник по созданию миров для ролевых игр.
-        Пользователь дал ПОДРОБНЫЙ запрос. Твоя задача:
-        1. Точно следовать всем указаниям пользователя
-        2. Не добавлять ничего от себя
-        3. Сохранить все детали из запроса
-
-        Сгенерируй мир в формате JSON с полями:
-        name, description, genre, setting, rules.
-
-        Заполни ВСЕ поля качественно и подробно!
-        description - минимум 2-3 предложения.
-        setting - минимум 2-3 предложения.
-        rules - минимум 3-5 правил мира.
-
-        ВАЖНО: Создай ТОЛЬКО ОДИН мир!
-        ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
-
     try:
+        print("=" * 50)
+        print("🚀 /api/generate/world вызван")
+        print(f"📝 Запрос: {req.prompt}")
+        
+        user = get_user_by_token(token)
+        if not user:
+            print("❌ Пользователь не авторизован")
+            return JSONResponse({"error": "Не авторизован"}, 401)
+
+        api_keys = user.api_keys or {}
+        api_key = api_keys.get("polza") or POLZA_API_KEY
+        model = api_keys.get("model") or POLZA_MODEL
+
+        if not api_key or api_key == "your-default-api-key-here":
+            print("❌ API ключ не настроен")
+            return JSONResponse({
+                "error": "API ключ не настроен. Добавьте ключ Polza в настройках профиля."
+            }, 400)
+
+        openai.api_key = api_key
+        openai.base_url = "https://polza.ai/api/v1/"
+
+        # Определяем, короткий это запрос или длинный
+        is_short = len(req.prompt.split()) < 10
+        print(f"📏 Тип запроса: {'короткий' if is_short else 'длинный'}")
+
+        if is_short:
+            system_prompt = """Ты — помощник по созданию миров для ролевых игр.
+            Пользователь дал КОРОТКИЙ запрос. Твоя задача:
+            1. Распознать жанр и сеттинг
+            2. Додумать недостающие детали (история, правила, атмосфера)
+            3. Сделать мир ЖИВЫМ и ИНТЕРЕСНЫМ
+
+            Сгенерируй мир в формате JSON с полями:
+            name, description, genre, setting, rules.
+
+            Заполни ВСЕ поля качественно и подробно!
+            description - минимум 2-3 предложения.
+            setting - минимум 2-3 предложения.
+            rules - минимум 3-5 правил мира.
+
+            ВАЖНО: Создай ТОЛЬКО ОДИН мир!
+            ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
+        else:
+            system_prompt = """Ты — помощник по созданию миров для ролевых игр.
+            Пользователь дал ПОДРОБНЫЙ запрос. Твоя задача:
+            1. Точно следовать всем указаниям пользователя
+            2. Не добавлять ничего от себя
+            3. Сохранить все детали из запроса
+
+            Сгенерируй мир в формате JSON с полями:
+            name, description, genre, setting, rules.
+
+            Заполни ВСЕ поля качественно и подробно!
+            description - минимум 2-3 предложения.
+            setting - минимум 2-3 предложения.
+            rules - минимум 3-5 правил мира.
+
+            ВАЖНО: Создай ТОЛЬКО ОДИН мир!
+            ВАЖНО: Ответ должен содержать только JSON, без лишнего текста!"""
+
+        print("📤 Отправка запроса к OpenAI...")
+        
         response = openai.chat.completions.create(
             model=model,
             messages=[
@@ -2978,17 +3027,22 @@ async def generate_world(req: GenerateRequest, token: str):
                 {"role": "user", "content": f"Создай мир по запросу: {req.prompt}"}
             ],
             temperature=0.9,
-            max_tokens=1500
+            max_tokens=1500,
+            timeout=60
         )
+        
+        print("✅ Ответ получен от OpenAI")
         result = response.choices[0].message.content
+        print(f"📄 Результат (первые 200 символов): {result[:200]}...")
 
         # Пробуем найти JSON в ответе
         json_match = re.search(r'\{.*\}', result, re.DOTALL)
         if json_match:
             try:
                 world_data = json.loads(json_match.group())
-            except json.JSONDecodeError:
-                # Если JSON невалидный, создаем мир из текста
+                print("✅ JSON успешно распарсен")
+            except json.JSONDecodeError as e:
+                print(f"❌ Ошибка парсинга JSON: {e}")
                 lines = [line.strip() for line in result.split('\n') if line.strip()]
                 world_data = {
                     "name": lines[0][:50] if lines else "Сгенерированный мир",
@@ -2998,7 +3052,7 @@ async def generate_world(req: GenerateRequest, token: str):
                     "rules": "Правила не указаны"
                 }
         else:
-            # Если JSON не найден, создаем мир из текста
+            print("⚠️ JSON не найден в ответе, создаём из текста")
             lines = [line.strip() for line in result.split('\n') if line.strip()]
             world_data = {
                 "name": lines[0][:50] if lines else "Сгенерированный мир",
@@ -3007,6 +3061,8 @@ async def generate_world(req: GenerateRequest, token: str):
                 "setting": result[:200],
                 "rules": "Правила не указаны"
             }
+
+        print(f"📝 Данные мира: {world_data}")
 
         # Сохраняем мир в БД
         with SessionLocal() as db:
@@ -3021,9 +3077,26 @@ async def generate_world(req: GenerateRequest, token: str):
             db.add(new_world)
             db.commit()
             db.refresh(new_world)
+            print(f"✅ Мир сохранён: ID={new_world.id}, Name={new_world.name}")
             return {"success": True, "id": new_world.id, "name": new_world.name}
 
+    except openai.APIError as e:
+        print(f"❌ Ошибка OpenAI API: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Ошибка AI API: {str(e)}"}, 500)
+    except openai.APIConnectionError as e:
+        print(f"❌ Ошибка подключения к OpenAI: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Ошибка подключения: {str(e)}"}, 500)
+    except openai.RateLimitError as e:
+        print(f"❌ Превышен лимит запросов: {e}")
+        return JSONResponse({"error": "Превышен лимит запросов. Попробуйте позже."}, 429)
     except Exception as e:
+        print(f"❌ Неизвестная ошибка: {e}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse({"error": f"Ошибка генерации: {str(e)}"}, 500)
 
 # ============================================
